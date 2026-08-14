@@ -222,7 +222,7 @@ export default function MpdcProjectMonitoringDetail() {
           </section>
         ) : null}
 
-        <section className="rounded-lg border border-slate-200 bg-white p-5">
+        <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
           <h2 className="text-sm font-semibold text-slate-800">Project Information</h2>
           <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <Field label="Implementing Office">{project.offices?.name}</Field>
@@ -240,7 +240,7 @@ export default function MpdcProjectMonitoringDetail() {
         </section>
 
         {procurement ? (
-          <section className="rounded-lg border border-slate-200 bg-white p-5">
+          <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
             <h2 className="text-sm font-semibold text-slate-800">Procurement (BAC)</h2>
             <p className="mt-0.5 text-xs text-slate-400">Read-only — recorded by the BAC office.</p>
             <div className="mt-4 flex items-center gap-2">
@@ -259,7 +259,7 @@ export default function MpdcProjectMonitoringDetail() {
           </section>
         ) : null}
 
-        <section className="rounded-lg border border-slate-200 bg-white p-5">
+        <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
           <h2 className="text-sm font-semibold text-slate-800">Monitoring History</h2>
           <p className="mt-0.5 text-xs text-slate-400">
             Reported by Engineering — read-only. Progress and photos are recorded by the implementing
@@ -329,7 +329,7 @@ export default function MpdcProjectMonitoringDetail() {
         </section>
 
         {(imagesByUpdate.get('unassigned') ?? []).length > 0 ? (
-          <section className="rounded-lg border border-slate-200 bg-white p-5">
+          <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
             <h2 className="text-sm font-semibold text-slate-800">Other Site Photos</h2>
             <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
               {imagesByUpdate.get('unassigned').map((image) => (

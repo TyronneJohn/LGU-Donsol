@@ -10,5 +10,5 @@ const navItems = [
 ]
 
 export default function MpdcLayout() {
-  return <DashboardShell title="MPDC" navItems={navItems} />
+  return <DashboardShell title="Municipal Planning and Development Council" navItems={navItems} />
 }

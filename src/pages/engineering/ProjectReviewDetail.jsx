@@ -413,7 +413,7 @@ export default function ProjectReviewDetail() {
       />
 
       <div className="space-y-6">
-        <section className="rounded-lg border border-slate-200 bg-white p-5">
+        <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
           <h2 className="text-sm font-semibold text-slate-800">Project Details</h2>
           <p className="mt-0.5 text-xs text-slate-400">
             Entered by MPDC — read-only. Any change to these details happens through the submitter's own
@@ -440,7 +440,7 @@ export default function ProjectReviewDetail() {
         </section>
 
         {submission ? (
-          <section className="rounded-lg border border-slate-200 bg-white p-5">
+          <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
             <h2 className="text-sm font-semibold text-slate-800">Submission</h2>
             <div className="mt-4 grid gap-4 sm:grid-cols-3">
               <Field label="Submission #">{submission.submission_number}</Field>
@@ -458,7 +458,7 @@ export default function ProjectReviewDetail() {
           </section>
         ) : null}
 
-        <form onSubmit={handleSaveFields} className="rounded-lg border border-slate-200 bg-white p-5">
+        <form onSubmit={handleSaveFields} className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
           <h2 className="text-sm font-semibold text-slate-800">Engineering Details</h2>
           <p className="mt-0.5 text-xs text-slate-400">
             Only these two fields are Engineering-editable, and only while the project is under review.
@@ -505,7 +505,7 @@ export default function ProjectReviewDetail() {
           ) : null}
         </form>
 
-        <section className="rounded-lg border border-slate-200 bg-white p-5">
+        <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
           <h2 className="text-sm font-semibold text-slate-800">Technical Documents</h2>
 
           {documents.length > 0 ? (
@@ -588,7 +588,7 @@ export default function ProjectReviewDetail() {
         </section>
 
         {history.length > 0 ? (
-          <section className="rounded-lg border border-slate-200 bg-white p-5">
+          <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
             <h2 className="text-sm font-semibold text-slate-800">Review History</h2>
             <ul className="mt-4 space-y-3">
               {history.map((entry) => (
@@ -607,7 +607,7 @@ export default function ProjectReviewDetail() {
           </section>
         ) : null}
 
-        <section className="rounded-lg border border-slate-200 bg-white p-5">
+        <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
           <h2 className="text-sm font-semibold text-slate-800">Send Back or Reject</h2>
 
           {!canReview ? (
@@ -666,7 +666,7 @@ export default function ProjectReviewDetail() {
         </section>
 
         {canReview ? (
-          <section className="rounded-lg border border-slate-200 bg-white p-5">
+          <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
             <h2 className="text-sm font-semibold text-slate-800">Endorse to BAC</h2>
             <p className="mt-1 text-sm text-slate-500">
               When the project is technically ready, endorse it to BAC to begin procurement.

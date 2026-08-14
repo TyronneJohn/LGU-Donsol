@@ -10,7 +10,16 @@ export default function DashboardShell({ title, navItems }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
   return (
-    <div className="flex min-h-screen bg-slate-50">
+    <div className="brand-surface relative flex min-h-screen">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed -top-32 right-0 h-96 w-96 rounded-full bg-blue-200/40 blur-3xl"
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed -bottom-32 left-1/4 h-96 w-96 rounded-full bg-gold-200/30 blur-3xl"
+      />
+
       <Sidebar
         brandTitle="LGU Donsol"
         brandSubtitle={title}
@@ -19,7 +28,7 @@ export default function DashboardShell({ title, navItems }) {
         onClose={() => setSidebarOpen(false)}
       />
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="relative flex min-w-0 flex-1 flex-col">
         <Topbar title={title} onMenuClick={() => setSidebarOpen(true)} />
         <main className="flex-1 p-4 sm:p-6">
           <Outlet />

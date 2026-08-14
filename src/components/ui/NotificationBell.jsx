@@ -31,7 +31,7 @@ export default function NotificationBell() {
         <div
           role="menu"
           aria-label="Notifications"
-          className="absolute right-0 z-30 mt-2 w-80 rounded-lg border border-slate-200 bg-white p-3 shadow-lg"
+          className="animate-pop-in absolute right-0 z-30 mt-2 w-80 origin-top-right rounded-xl border border-slate-200 bg-white p-3 shadow-xl shadow-slate-900/10"
         >
           <p className="px-1 pb-1 text-sm font-semibold text-slate-800">Notifications</p>
           <EmptyState

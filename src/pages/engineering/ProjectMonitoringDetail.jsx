@@ -348,7 +348,7 @@ export default function ProjectMonitoringDetail() {
         ) : null}
 
         {editable ? (
-          <form onSubmit={handleSubmitUpdate} className="rounded-lg border border-slate-200 bg-white p-5">
+          <form onSubmit={handleSubmitUpdate} className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
             <h2 className="text-sm font-semibold text-slate-800">New Monitoring Update</h2>
 
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
@@ -508,14 +508,14 @@ export default function ProjectMonitoringDetail() {
             </div>
           </form>
         ) : (
-          <section className="rounded-lg border border-slate-200 bg-white p-5">
+          <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
             <p className="text-sm text-slate-500">
               This project is completed and no longer accepts new monitoring updates.
             </p>
           </section>
         )}
 
-        <section className="rounded-lg border border-slate-200 bg-white p-5">
+        <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
           <h2 className="text-sm font-semibold text-slate-800">Monitoring History</h2>
           {updates.length === 0 ? (
             <p className="mt-2 text-sm text-slate-500">No monitoring updates yet.</p>
@@ -580,7 +580,7 @@ export default function ProjectMonitoringDetail() {
         </section>
 
         {(imagesByUpdate.get('unassigned') ?? []).length > 0 ? (
-          <section className="rounded-lg border border-slate-200 bg-white p-5">
+          <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
             <h2 className="text-sm font-semibold text-slate-800">Other Site Photos</h2>
             <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
               {imagesByUpdate.get('unassigned').map((image) => (

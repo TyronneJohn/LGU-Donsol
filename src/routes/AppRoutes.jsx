@@ -1,5 +1,5 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
-import { ClipboardList, Globe, ScrollText } from 'lucide-react'
+import { ClipboardList, Globe } from 'lucide-react'
 
 import PublicLayout from '../layouts/PublicLayout'
 import AdminLayout from '../layouts/AdminLayout'
@@ -10,6 +10,7 @@ import ProtectedRoute from '../components/ProtectedRoute'
 
 import PublicProjects from '../pages/public/PublicProjects'
 import Login from '../pages/Login'
+import ResetPassword from '../pages/ResetPassword'
 import Unauthorized from '../pages/Unauthorized'
 import NotFound from '../pages/NotFound'
 import ComingSoon from '../pages/shared/ComingSoon'
@@ -19,6 +20,7 @@ import StaffAccounts from '../pages/admin/StaffAccounts'
 import Offices from '../pages/admin/Offices'
 import AdminProjects from '../pages/admin/AdminProjects'
 import AdminProjectDetail from '../pages/admin/AdminProjectDetail'
+import AuditLog from '../pages/admin/AuditLog'
 import AdminGeoMapping from '../pages/admin/GeoMapping'
 import MpdcDashboard from '../pages/mpdc/MpdcDashboard'
 import GeoMapping from '../pages/mpdc/GeoMapping'
@@ -54,6 +56,7 @@ export default function AppRoutes() {
       </Route>
 
       <Route path="/login" element={<Login />} />
+      <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/unauthorized" element={<Unauthorized />} />
 
       <Route
@@ -70,17 +73,7 @@ export default function AppRoutes() {
         <Route path="geo-map" element={<AdminGeoMapping />} />
         <Route path="staff" element={<StaffAccounts />} />
         <Route path="offices" element={<Offices />} />
-        <Route
-          path="audit-log"
-          element={
-            <ComingSoon
-              title="Audit Log"
-              description="Read-only history of system actions."
-              icon={ScrollText}
-              breadcrumbs={[{ label: 'Dashboard', to: '/admin' }, { label: 'Audit Log' }]}
-            />
-          }
-        />
+        <Route path="audit-log" element={<AuditLog />} />
       </Route>
 
       <Route

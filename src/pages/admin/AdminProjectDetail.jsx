@@ -242,7 +242,7 @@ export default function AdminProjectDetail() {
           </section>
         ) : null}
 
-        <section className="rounded-lg border border-slate-200 bg-white p-5">
+        <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
           <h2 className="text-sm font-semibold text-slate-800">Project Details</h2>
           <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <Field label="Office">{project.offices?.name}</Field>
@@ -271,7 +271,7 @@ export default function AdminProjectDetail() {
           </div>
         </section>
 
-        <section className="rounded-lg border border-slate-200 bg-white p-5">
+        <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
           <h2 className="text-sm font-semibold text-slate-800">Submissions (MPDC)</h2>
           {submissions.length === 0 ? (
             <p className="mt-2 text-sm text-slate-500">No submissions yet.</p>
@@ -291,7 +291,7 @@ export default function AdminProjectDetail() {
           )}
         </section>
 
-        <section className="rounded-lg border border-slate-200 bg-white p-5">
+        <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
           <h2 className="text-sm font-semibold text-slate-800">Review Decisions (MPDC)</h2>
           {approvals.length === 0 ? (
             <p className="mt-2 text-sm text-slate-500">No review decisions yet.</p>
@@ -313,7 +313,7 @@ export default function AdminProjectDetail() {
           )}
         </section>
 
-        <section className="rounded-lg border border-slate-200 bg-white p-5">
+        <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
           <h2 className="text-sm font-semibold text-slate-800">Procurement (BAC)</h2>
           {procurement.length === 0 ? (
             <p className="mt-2 text-sm text-slate-500">No procurement record yet.</p>
@@ -342,7 +342,7 @@ export default function AdminProjectDetail() {
           )}
         </section>
 
-        <section className="rounded-lg border border-slate-200 bg-white p-5">
+        <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
           <h2 className="text-sm font-semibold text-slate-800">Monitoring Updates (Engineering)</h2>
           {updates.length === 0 ? (
             <p className="mt-2 text-sm text-slate-500">No monitoring updates yet.</p>
@@ -369,7 +369,7 @@ export default function AdminProjectDetail() {
           )}
         </section>
 
-        <section className="rounded-lg border border-slate-200 bg-white p-5">
+        <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
           <h2 className="text-sm font-semibold text-slate-800">Initial Project Documents</h2>
           {documents.length === 0 ? (
             <p className="mt-2 text-sm text-slate-500">No documents uploaded yet.</p>
@@ -393,7 +393,7 @@ export default function AdminProjectDetail() {
           )}
         </section>
 
-        <section className="rounded-lg border border-slate-200 bg-white p-5">
+        <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
           <h2 className="text-sm font-semibold text-slate-800">Status History</h2>
           {statusHistory.length === 0 ? (
             <p className="mt-2 text-sm text-slate-500">No status changes recorded.</p>

@@ -20,7 +20,7 @@ export default function UserMenu() {
         aria-expanded={open}
         className="flex items-center gap-2 rounded-md py-1.5 pl-1.5 pr-2 text-sm hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
       >
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-700 text-xs font-semibold text-white">
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-blue-600 to-blue-800 text-xs font-semibold text-white shadow-sm">
           {initial}
         </span>
         <span className="hidden max-w-[10rem] truncate font-medium text-slate-700 sm:inline">
@@ -33,7 +33,7 @@ export default function UserMenu() {
         <div
           role="menu"
           aria-label="Account menu"
-          className="absolute right-0 z-30 mt-2 w-56 rounded-lg border border-slate-200 bg-white p-2 shadow-lg"
+          className="animate-pop-in absolute right-0 z-30 mt-2 w-56 origin-top-right rounded-xl border border-slate-200 bg-white p-2 shadow-xl shadow-slate-900/10"
         >
           <div className="border-b border-slate-100 px-2 pb-2">
             <p className="truncate text-sm font-medium text-slate-800">{label}</p>

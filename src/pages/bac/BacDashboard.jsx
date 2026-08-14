@@ -7,6 +7,7 @@ import Button from '../../components/ui/Button'
 import Badge from '../../components/ui/Badge'
 import { LoadingState } from '../../components/ui/LoadingState'
 import EmptyState from '../../components/ui/EmptyState'
+import { ProjectStatusCharts } from '../../components/ui/ProjectStatusCharts'
 import { formatCurrency } from '../../utils/format'
 import {
   PROJECT_STATUS_LABELS,
@@ -18,7 +19,7 @@ import {
 
 function StatCard({ label, value }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4">
+    <div className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-4">
       <p className="text-xs font-medium uppercase tracking-wide text-slate-400">{label}</p>
       <p className="mt-1 text-2xl font-semibold text-slate-800">{value}</p>
     </div>
@@ -29,6 +30,21 @@ export default function BacDashboard() {
   const toast = useToast()
   const [projects, setProjects] = useState([])
   const [loading, setLoading] = useState(true)
+  const [statusTally, setStatusTally] = useState({})
+
+  // Independent of `loadProjects` below (which only fetches the
+  // procurement-eligible subset for the table) — this covers every project
+  // status system-wide, for the chart.
+  async function loadStatusTally() {
+    const { data, error } = await supabase.from('projects').select('status')
+    if (error) {
+      toast.error('Could not load status overview', error.message)
+      return
+    }
+    const tally = {}
+    for (const row of data ?? []) tally[row.status] = (tally[row.status] ?? 0) + 1
+    setStatusTally(tally)
+  }
 
   async function loadProjects() {
     setLoading(true)
@@ -74,6 +90,7 @@ export default function BacDashboard() {
 
   useEffect(() => {
     loadProjects()
+    loadStatusTally()
   }, [])
 
   const notStarted = projects.filter((p) => !p.procurement).length
@@ -86,6 +103,8 @@ export default function BacDashboard() {
         title="Dashboard"
         description="Procurement cycles in progress and projects ready to bid."
       />
+
+      <ProjectStatusCharts counts={statusTally} title="Projects by Status — All Offices" />
 
       {loading ? (
         <LoadingState label="Loading procurement activity..." />
@@ -103,7 +122,7 @@ export default function BacDashboard() {
             <StatCard label="Awarded, Pending Contract" value={awarded} />
           </div>
 
-          <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+          <div className="overflow-x-auto rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60">
             <table className="w-full text-left text-sm">
               <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                 <tr>

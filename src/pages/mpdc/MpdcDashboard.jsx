@@ -6,6 +6,7 @@ import PageHeader from '../../components/ui/PageHeader'
 import Button from '../../components/ui/Button'
 import { LoadingState } from '../../components/ui/LoadingState'
 import EmptyState from '../../components/ui/EmptyState'
+import { ProjectStatusCharts } from '../../components/ui/ProjectStatusCharts'
 import { MONITORING_VISIBLE_STATUSES } from '../../utils/projectStatus'
 import { getMonitoringFlags } from '../../utils/decisionSupport'
 import { exportProjectsToExcel, toExportRow } from '../../utils/exportProjects'
@@ -28,6 +29,7 @@ export default function MpdcDashboard() {
   const [loadError, setLoadError] = useState(null)
   const [exporting, setExporting] = useState(false)
   const [counts, setCounts] = useState(null)
+  const [statusTally, setStatusTally] = useState({})
 
   // Every exit from this function — success, a query error, or any
   // unexpected thrown error — goes through the single finally below, so
@@ -50,6 +52,10 @@ export default function MpdcDashboard() {
 
       const projects = rows ?? []
       const byStatus = (status) => projects.filter((p) => p.status === status).length
+
+      const tally = {}
+      for (const project of projects) tally[project.status] = (tally[project.status] ?? 0) + 1
+      setStatusTally(tally)
 
       const monitoringEligible = projects.filter((p) => MONITORING_VISIBLE_STATUSES.includes(p.status))
       let attention = 0
@@ -183,7 +189,7 @@ export default function MpdcDashboard() {
       ) : (
         <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
           {STAT_TILES.map((tile) => (
-            <div key={tile.key} className="rounded-lg border border-slate-200 bg-white p-4">
+            <div key={tile.key} className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-4">
               <p className="text-xs font-medium uppercase tracking-wide text-slate-400">{tile.label}</p>
               <p
                 className={`mt-1 flex items-center gap-1.5 text-2xl font-semibold ${
@@ -200,7 +206,9 @@ export default function MpdcDashboard() {
         </div>
       )}
 
-      <div className="rounded-lg border border-slate-200 bg-white p-5">
+      {!loading && !loadError ? <ProjectStatusCharts counts={statusTally} /> : null}
+
+      <div className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
         <h2 className="text-sm font-semibold text-slate-800">Quick Actions</h2>
         <div className="mt-3 flex flex-wrap gap-2">
           <Button icon={Plus} to="/mpdc/projects/new">

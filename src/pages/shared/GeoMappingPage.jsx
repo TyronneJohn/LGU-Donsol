@@ -273,26 +273,26 @@ export default function GeoMappingPage({
       ) : (
         <div className="space-y-4">
           <div className={`grid grid-cols-2 gap-3 ${showDss ? 'sm:grid-cols-4' : 'sm:grid-cols-3'}`}>
-            <div className="rounded-lg border border-slate-200 bg-white p-4">
+            <div className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-4">
               <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-slate-400">
                 <FolderKanban className="h-3.5 w-3.5" aria-hidden="true" /> Total Projects
               </p>
               <p className="mt-1 text-2xl font-semibold text-slate-800">{filteredProjects.length}</p>
             </div>
-            <div className="rounded-lg border border-slate-200 bg-white p-4">
+            <div className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-4">
               <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-slate-400">
                 <MapPin className="h-3.5 w-3.5" aria-hidden="true" /> Mapped Projects
               </p>
               <p className="mt-1 text-2xl font-semibold text-slate-800">{mappableProjects.length}</p>
             </div>
-            <div className="rounded-lg border border-slate-200 bg-white p-4">
+            <div className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-4">
               <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-slate-400">
                 <MapPinOff className="h-3.5 w-3.5" aria-hidden="true" /> Without Coordinates
               </p>
               <p className="mt-1 text-2xl font-semibold text-slate-800">{unmappableProjects.length}</p>
             </div>
             {showDss ? (
-              <div className="rounded-lg border border-slate-200 bg-white p-4">
+              <div className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-4">
                 <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-slate-400">
                   <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" /> Requiring Attention
                 </p>
@@ -345,7 +345,7 @@ export default function GeoMappingPage({
             </div>
           ) : null}
 
-          <div className="rounded-lg border border-slate-200 bg-white p-4">
+          <div className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-4">
             <h2 className="text-sm font-semibold text-slate-800">Project List ({filteredProjects.length})</h2>
             {filteredProjects.length === 0 ? (
               <p className="mt-2 text-sm text-slate-500">No projects match the current filters.</p>
@@ -417,7 +417,7 @@ export default function GeoMappingPage({
             )}
           </div>
 
-          <div className="rounded-lg border border-slate-200 bg-white p-4">
+          <div className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-4">
             <div className="flex items-center gap-2 text-sm text-slate-600">
               <MapPinOff className="h-4 w-4 text-slate-400" aria-hidden="true" />
               <span>

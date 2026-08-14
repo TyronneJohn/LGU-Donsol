@@ -135,7 +135,7 @@ export default function BacContractors() {
       {formOpen ? (
         <form
           onSubmit={handleSubmit}
-          className="mb-6 grid gap-4 rounded-lg border border-slate-200 bg-white p-5 sm:grid-cols-2"
+          className="mb-6 grid gap-4 rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5 sm:grid-cols-2"
         >
           <div className="sm:col-span-2">
             <label htmlFor="name" className="mb-1 block text-sm font-medium text-slate-700">
@@ -227,7 +227,7 @@ export default function BacContractors() {
       ) : filtered.length === 0 ? (
         <EmptyState icon={Building2} title="No contractors found" description="Contractors you add will appear here." />
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+        <div className="overflow-x-auto rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60">
           <table className="w-full text-left text-sm">
             <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr>

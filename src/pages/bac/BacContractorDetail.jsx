@@ -108,7 +108,7 @@ export default function BacContractorDetail() {
       />
 
       <div className="space-y-6">
-        <section className="rounded-lg border border-slate-200 bg-white p-5">
+        <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-800">
             <Building2 className="h-4 w-4 text-slate-400" aria-hidden="true" />
             Contractor Details
@@ -122,7 +122,7 @@ export default function BacContractorDetail() {
           </div>
         </section>
 
-        <section className="rounded-lg border border-slate-200 bg-white p-5">
+        <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
           <h2 className="text-sm font-semibold text-slate-800">Bid History</h2>
           {bids.length === 0 ? (
             <p className="mt-2 text-sm text-slate-500">No bids recorded yet.</p>
@@ -151,7 +151,7 @@ export default function BacContractorDetail() {
           )}
         </section>
 
-        <section className="rounded-lg border border-slate-200 bg-white p-5">
+        <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
           <h2 className="text-sm font-semibold text-slate-800">Awards &amp; Contracts</h2>
           {awards.length === 0 ? (
             <p className="mt-2 text-sm text-slate-500">No awards recorded yet.</p>

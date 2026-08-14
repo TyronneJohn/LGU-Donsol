@@ -3,11 +3,13 @@ import { Link } from 'react-router-dom'
 import { Loader2 } from 'lucide-react'
 
 const VARIANTS = {
-  primary: 'bg-blue-700 text-white hover:bg-blue-800 focus-visible:ring-blue-600',
+  primary:
+    'bg-linear-to-r from-blue-700 to-blue-600 text-white shadow-sm shadow-blue-700/30 hover:from-blue-800 hover:to-blue-700 hover:shadow-md hover:shadow-blue-700/30 focus-visible:ring-blue-600',
   secondary:
-    'border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 focus-visible:ring-blue-600',
+    'border border-slate-300 bg-white text-slate-700 hover:border-slate-400 hover:bg-slate-50 focus-visible:ring-blue-600',
   ghost: 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus-visible:ring-blue-600',
-  danger: 'bg-red-600 text-white hover:bg-red-700 focus-visible:ring-red-600',
+  danger:
+    'bg-linear-to-r from-red-600 to-red-500 text-white shadow-sm shadow-red-600/30 hover:from-red-700 hover:to-red-600 focus-visible:ring-red-600',
 }
 
 const SIZES = {
@@ -35,7 +37,7 @@ const Button = forwardRef(function Button(
   },
   ref,
 ) {
-  const classes = `inline-flex items-center justify-center gap-2 rounded-md font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 ${VARIANTS[variant]} ${SIZES[size]} ${className}`
+  const classes = `inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 disabled:shadow-none ${VARIANTS[variant]} ${SIZES[size]} ${className}`
 
   const content = (
     <>

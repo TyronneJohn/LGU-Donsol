@@ -28,11 +28,16 @@ export default function Sidebar({ brandTitle, brandSubtitle, navItems, open, onC
       ) : null}
 
       <aside
-        className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-slate-200 bg-white shadow-sm transition-transform duration-200 ease-in-out lg:static lg:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col overflow-hidden bg-linear-to-b from-blue-900 via-blue-950 to-blue-950 shadow-xl shadow-blue-950/30 transition-transform duration-200 ease-in-out lg:static lg:translate-x-0 ${
           open ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        <div className="flex items-center justify-between gap-2 border-b border-slate-200 bg-blue-950 px-4 py-4">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute -right-16 -top-16 h-56 w-56 rounded-full bg-gold-400/10 blur-3xl"
+        />
+
+        <div className="relative flex items-center justify-between gap-2 border-b border-white/10 px-4 py-4">
           <div className="flex items-center gap-2.5">
             <img
               src={donsolSeal}
@@ -40,8 +45,8 @@ export default function Sidebar({ brandTitle, brandSubtitle, navItems, open, onC
               className="h-9 w-9 shrink-0 rounded-full ring-2 ring-gold-400/80"
             />
             <div className="leading-tight">
-              <p className="text-sm font-semibold text-white">{brandTitle}</p>
-              <p className="text-xs text-blue-200">{brandSubtitle}</p>
+              <p className="font-display text-sm font-semibold text-white">{brandTitle}</p>
+              <p className="text-xs text-blue-300">{brandSubtitle}</p>
             </div>
           </div>
           <button
@@ -54,7 +59,7 @@ export default function Sidebar({ brandTitle, brandSubtitle, navItems, open, onC
           </button>
         </div>
 
-        <nav aria-label="Dashboard" className="flex-1 space-y-1 overflow-y-auto px-2 py-4">
+        <nav aria-label="Dashboard" className="relative flex-1 space-y-1 overflow-y-auto px-3 py-4">
           {navItems.map((item) => (
             <NavLink
               key={item.to}
@@ -62,14 +67,16 @@ export default function Sidebar({ brandTitle, brandSubtitle, navItems, open, onC
               end={item.end}
               onClick={onClose}
               className={({ isActive }) =>
-                `flex items-center gap-2.5 rounded-md border-l-2 px-3 py-2 text-sm font-medium transition-colors ${
+                `group flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-all ${
                   isActive
-                    ? 'border-gold-500 bg-blue-50 text-blue-700'
-                    : 'border-transparent text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                    ? 'bg-linear-to-r from-gold-500 to-gold-400 text-blue-950 shadow-md shadow-gold-500/20'
+                    : 'text-blue-200 hover:bg-white/10 hover:text-white'
                 }`
               }
             >
-              {item.icon ? <item.icon className="h-4 w-4 shrink-0" aria-hidden="true" /> : null}
+              {item.icon ? (
+                <item.icon className="h-4 w-4 shrink-0 opacity-90 group-hover:opacity-100" aria-hidden="true" />
+              ) : null}
               {item.label}
             </NavLink>
           ))}

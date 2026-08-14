@@ -585,7 +585,7 @@ export default function BacProcurementDetail() {
       />
 
       <div className="space-y-6">
-        <section className="rounded-lg border border-slate-200 bg-white p-5">
+        <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
           <h2 className="text-sm font-semibold text-slate-800">Project Details</h2>
           <p className="mt-0.5 text-xs text-slate-400">
             MPDC's original information plus Engineering's endorsed figures — read-only here.
@@ -608,7 +608,7 @@ export default function BacProcurementDetail() {
           </div>
         </section>
 
-        <section className="rounded-lg border border-slate-200 bg-white p-5">
+        <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
           <h2 className="text-sm font-semibold text-slate-800">Technical Documents</h2>
           <p className="mt-0.5 text-xs text-slate-400">
             Uploaded by MPDC and Engineering during planning and review.
@@ -636,7 +636,7 @@ export default function BacProcurementDetail() {
         </section>
 
         {!procurement ? (
-          <form onSubmit={handleStartProcurement} className="rounded-lg border border-slate-200 bg-white p-5">
+          <form onSubmit={handleStartProcurement} className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
             <h2 className="text-sm font-semibold text-slate-800">Start Procurement</h2>
             <p className="mt-1 text-sm text-slate-500">
               Opening a procurement cycle moves this project to For Procurement.
@@ -695,7 +695,7 @@ export default function BacProcurementDetail() {
           </form>
         ) : (
           <>
-            <form onSubmit={handleSaveDetails} className="rounded-lg border border-slate-200 bg-white p-5">
+            <form onSubmit={handleSaveDetails} className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
               <h2 className="text-sm font-semibold text-slate-800">Procurement Details</h2>
               <div className="mt-4 grid gap-4 sm:grid-cols-3">
                 <div>
@@ -785,7 +785,7 @@ export default function BacProcurementDetail() {
               </div>
             </form>
 
-            <section className="rounded-lg border border-slate-200 bg-white p-5">
+            <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
               <h2 className="text-sm font-semibold text-slate-800">Bidders</h2>
 
               {bidders.length === 0 ? (
@@ -906,7 +906,7 @@ export default function BacProcurementDetail() {
               </form>
             </section>
 
-            <section className="rounded-lg border border-slate-200 bg-white p-5">
+            <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
               <h2 className="text-sm font-semibold text-slate-800">Award &amp; Contract</h2>
 
               <div className="mt-4 flex flex-wrap items-end gap-3">
@@ -1048,7 +1048,7 @@ export default function BacProcurementDetail() {
               ) : null}
             </section>
 
-            <section className="rounded-lg border border-slate-200 bg-white p-5">
+            <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
               <h2 className="text-sm font-semibold text-slate-800">Procurement Documents</h2>
 
               {documents.length === 0 ? (
@@ -1126,7 +1126,7 @@ export default function BacProcurementDetail() {
         )}
 
         {pastCycles.length > 0 ? (
-          <section className="rounded-lg border border-slate-200 bg-white p-5">
+          <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
             <h2 className="text-sm font-semibold text-slate-800">Past Procurement Cycles</h2>
             <ul className="mt-4 space-y-3">
               {pastCycles.map((cycle) => (

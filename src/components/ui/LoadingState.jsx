@@ -1,7 +1,7 @@
 import { Loader2 } from 'lucide-react'
 
 export function Spinner({ className = 'h-5 w-5' }) {
-  return <Loader2 className={`${className} animate-spin`} aria-hidden="true" />
+  return <Loader2 className={`${className} animate-spin text-blue-600`} aria-hidden="true" />
 }
 
 // Loading placeholder for route/page/panel-level fetches. `fullScreen` is

@@ -10,5 +10,5 @@ const navItems = [
 ]
 
 export default function BacLayout() {
-  return <DashboardShell title="BAC" navItems={navItems} />
+  return <DashboardShell title="Bids and Awards Committee" navItems={navItems} />
 }

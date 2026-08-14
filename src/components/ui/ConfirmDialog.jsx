@@ -40,14 +40,14 @@ export default function ConfirmDialog({
         type="button"
         aria-label="Dismiss dialog"
         onClick={onCancel}
-        className="fixed inset-0 bg-slate-900/50"
+        className="fixed inset-0 bg-blue-950/40 backdrop-blur-sm"
       />
       <div
         role="alertdialog"
         aria-modal="true"
         aria-labelledby="confirm-dialog-title"
         aria-describedby={description ? 'confirm-dialog-description' : undefined}
-        className="relative w-full max-w-sm rounded-lg bg-white p-5 shadow-xl"
+        className="animate-pop-in relative w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl ring-1 ring-slate-900/5"
       >
         <div className="flex items-start gap-3">
           {tone === 'danger' ? (

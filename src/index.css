@@ -30,6 +30,50 @@
   --color-gold-700: #a35f14;
   --color-gold-800: #7c4a13;
   --color-gold-900: #653d14;
+
+  --font-sans:
+    'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-display:
+    'Lexend', 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  --animate-blob: blob 16s ease-in-out infinite;
+  --animate-fade-in: fade-in 0.35s ease-out both;
+  --animate-pop-in: pop-in 0.15s ease-out both;
+}
+
+@keyframes blob {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  33% {
+    transform: translate(3%, -4%) scale(1.08);
+  }
+  66% {
+    transform: translate(-3%, 3%) scale(0.95);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
 }
 
 :root {
@@ -38,6 +82,39 @@
 
 body {
   margin: 0;
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* Soft brand mesh used behind auth/dashboard surfaces — three blurred radial
+   washes in navy + gold so every screen ties back to the seal's palette
+   instead of a flat white/slate fill. */
+.brand-mesh {
+  background-color: var(--color-blue-950);
+  background-image:
+    radial-gradient(52rem 34rem at 12% -10%, color-mix(in oklab, var(--color-blue-500) 55%, transparent), transparent 60%),
+    radial-gradient(46rem 30rem at 110% 10%, color-mix(in oklab, var(--color-gold-500) 40%, transparent), transparent 55%),
+    radial-gradient(60rem 40rem at 50% 120%, color-mix(in oklab, var(--color-blue-700) 60%, transparent), transparent 60%);
+}
+
+.brand-surface {
+  background-color: var(--color-blue-50);
+  background-image:
+    radial-gradient(40rem 24rem at 100% -10%, color-mix(in oklab, var(--color-blue-200) 55%, transparent), transparent 60%),
+    radial-gradient(30rem 20rem at -10% 110%, color-mix(in oklab, var(--color-gold-200) 45%, transparent), transparent 60%);
+}
+
+.glass-card {
+  background: color-mix(in oklab, white 88%, transparent);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+/* Edge/Chromium inject their own reveal-password icon inside
+   type="password" fields, which doubles up with our custom Eye/EyeOff
+   toggle button. Hide the native one everywhere. */
+input[type='password']::-ms-reveal,
+input[type='password']::-ms-clear {
+  display: none;
 }

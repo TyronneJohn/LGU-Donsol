@@ -451,7 +451,7 @@ export default function ProjectForm() {
 
       <div className="space-y-6">
         {!isNew && history.length > 0 ? (
-          <section className="rounded-lg border border-slate-200 bg-white p-5">
+          <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
             <h2 className="text-sm font-semibold text-slate-800">Review History</h2>
             <ul className="mt-4 space-y-3">
               {history.map((entry) => (
@@ -470,7 +470,7 @@ export default function ProjectForm() {
           </section>
         ) : null}
 
-        <form onSubmit={handleSaveDraft} className="rounded-lg border border-slate-200 bg-white p-5">
+        <form onSubmit={handleSaveDraft} className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
           <h2 className="text-sm font-semibold text-slate-800">Project Details</h2>
 
           <fieldset disabled={!editable} className="mt-4 grid gap-4 sm:grid-cols-2">
@@ -650,7 +650,7 @@ export default function ProjectForm() {
         </form>
 
         {!isNew && (project.approved_budget != null || project.funding_source) ? (
-          <section className="rounded-lg border border-slate-200 bg-white p-5">
+          <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
             <h2 className="text-sm font-semibold text-slate-800">Engineering Details</h2>
             <p className="mt-0.5 text-xs text-slate-400">
               Entered by Engineering during review — read-only here.
@@ -671,7 +671,7 @@ export default function ProjectForm() {
         ) : null}
 
         {!isNew ? (
-          <section className="rounded-lg border border-slate-200 bg-white p-5">
+          <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
             <h2 className="text-sm font-semibold text-slate-800">Initial Project Documents</h2>
 
             {documents.length > 0 ? (
@@ -757,7 +757,7 @@ export default function ProjectForm() {
         ) : null}
 
         {!isNew && editable ? (
-          <section className="rounded-lg border border-slate-200 bg-white p-5">
+          <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
             <h2 className="text-sm font-semibold text-slate-800">Submit for Review</h2>
             <p className="mt-1 text-sm text-slate-500">
               Once submitted, this project is locked for editing until a decision is recorded.
