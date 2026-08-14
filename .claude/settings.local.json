@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx supabase *)",
+      "Bash(npm run *)",
+      "Bash(node _tmp_test_dashboard_logic.mjs)"
+    ]
+  }
+}

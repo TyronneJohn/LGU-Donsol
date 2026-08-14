@@ -1,0 +1,43 @@
+@import "tailwindcss";
+
+/*
+ * Brand palette pulled from the LGU Donsol seal: the navy ring, the gold
+ * stars/sun rays, and the shield red. Overriding Tailwind's `blue` scale
+ * (rather than adding a parallel one) means every existing `blue-*` class
+ * across the app picks up the seal's navy automatically. `gold` is new,
+ * used for accents (active states, highlight bars) that read as "official".
+ */
+@theme {
+  --color-blue-50: #eef3fb;
+  --color-blue-100: #d9e4f5;
+  --color-blue-200: #b3c9ec;
+  --color-blue-300: #82a5de;
+  --color-blue-400: #4f7bcb;
+  --color-blue-500: #2c58ae;
+  --color-blue-600: #1a3f8f;
+  --color-blue-700: #14316f;
+  --color-blue-800: #102759;
+  --color-blue-900: #0c1d43;
+  --color-blue-950: #081530;
+
+  --color-gold-50: #fefaec;
+  --color-gold-100: #fdf1c9;
+  --color-gold-200: #fbe293;
+  --color-gold-300: #f8cd5c;
+  --color-gold-400: #f5ba33;
+  --color-gold-500: #eea325;
+  --color-gold-600: #cc7f18;
+  --color-gold-700: #a35f14;
+  --color-gold-800: #7c4a13;
+  --color-gold-900: #653d14;
+}
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
