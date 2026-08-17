@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { AlertTriangle, FileWarning, Trash2 } from 'lucide-react'
+import { FileWarning, MapPin, Trash2 } from 'lucide-react'
 import { supabase } from '../../lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
 import { useConfirm } from '../../hooks/useConfirm'
@@ -9,9 +9,12 @@ import Button from '../../components/ui/Button'
 import Badge from '../../components/ui/Badge'
 import { LoadingState } from '../../components/ui/LoadingState'
 import EmptyState from '../../components/ui/EmptyState'
+import DssPanel from '../../components/ui/DssPanel'
+import LocationModal from '../../components/LocationModal'
 import { formatCurrency, formatDate, formatDateTime } from '../../utils/format'
 import { PROJECT_STATUS_LABELS, PROJECT_STATUS_TONES } from '../../utils/projectStatus'
-import { getMonitoringFlags, getFlagTone } from '../../utils/decisionSupport'
+import { evaluateProjectDss } from '../../utils/decisionSupport'
+import { isWithinDonsol } from '../../utils/geo'
 
 const DOC_CATEGORY_LABELS = {
   PROGRAM_OF_WORKS: 'Program of Works',
@@ -51,6 +54,7 @@ export default function AdminProjectDetail() {
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [locationOpen, setLocationOpen] = useState(false)
 
   async function loadData() {
     setLoading(true)
@@ -197,7 +201,7 @@ export default function AdminProjectDetail() {
     )
   }
 
-  const flags = getMonitoringFlags(project, updates)
+  const dssDecision = evaluateProjectDss(project, updates)
 
   return (
     <div>
@@ -222,25 +226,7 @@ export default function AdminProjectDetail() {
       />
 
       <div className="space-y-6">
-        {flags.length > 0 ? (
-          <section className="rounded-lg border border-amber-200 bg-amber-50 p-5">
-            <h2 className="flex items-center gap-2 text-sm font-semibold text-amber-900">
-              <AlertTriangle className="h-4 w-4" aria-hidden="true" />
-              DSS Monitoring Flags
-            </h2>
-            <p className="mt-0.5 text-xs text-amber-800">
-              Same decision-support logic used on the Engineering and MPDC monitoring pages — read-only here.
-            </p>
-            <ul className="mt-3 space-y-1.5">
-              {flags.map((flag) => (
-                <li key={flag.type} className="flex items-center gap-2 text-sm">
-                  <Badge tone={getFlagTone(flag.severity)}>{flag.type.replace('_', ' ')}</Badge>
-                  <span className="text-amber-900">{flag.message}</span>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ) : null}
+        <DssPanel decision={dssDecision} />
 
         <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
           <h2 className="text-sm font-semibold text-slate-800">Project Details</h2>
@@ -251,9 +237,13 @@ export default function AdminProjectDetail() {
             <Field label="Barangay">{project.barangay}</Field>
             <Field label="Location">{project.location_text}</Field>
             <Field label="Coordinates">
-              {project.latitude != null && project.longitude != null
-                ? `${project.latitude}, ${project.longitude}`
-                : null}
+              {isWithinDonsol(project.latitude, project.longitude) ? (
+                <Button variant="secondary" size="sm" icon={MapPin} onClick={() => setLocationOpen(true)}>
+                  See Location
+                </Button>
+              ) : (
+                <span className="text-slate-400">No location on file for Donsol, Sorsogon.</span>
+              )}
             </Field>
             <Field label="Estimated Cost">{formatCurrency(project.estimated_cost)}</Field>
             <Field label="Approved Budget">{formatCurrency(project.approved_budget)}</Field>
@@ -415,6 +405,8 @@ export default function AdminProjectDetail() {
           )}
         </section>
       </div>
+
+      <LocationModal open={locationOpen} project={project} onClose={() => setLocationOpen(false)} />
     </div>
   )
 }

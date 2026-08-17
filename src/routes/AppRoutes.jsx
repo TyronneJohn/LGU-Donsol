@@ -14,6 +14,7 @@ import ResetPassword from '../pages/ResetPassword'
 import Unauthorized from '../pages/Unauthorized'
 import NotFound from '../pages/NotFound'
 import ComingSoon from '../pages/shared/ComingSoon'
+import Messaging from '../pages/shared/Messaging'
 
 import AdminDashboard from '../pages/admin/AdminDashboard'
 import StaffAccounts from '../pages/admin/StaffAccounts'
@@ -21,21 +22,17 @@ import Offices from '../pages/admin/Offices'
 import AdminProjects from '../pages/admin/AdminProjects'
 import AdminProjectDetail from '../pages/admin/AdminProjectDetail'
 import AuditLog from '../pages/admin/AuditLog'
-import AdminGeoMapping from '../pages/admin/GeoMapping'
 import MpdcDashboard from '../pages/mpdc/MpdcDashboard'
-import GeoMapping from '../pages/mpdc/GeoMapping'
 import MpdcMonitoring from '../pages/mpdc/MpdcMonitoring'
 import MpdcProjectMonitoringDetail from '../pages/mpdc/MpdcProjectMonitoringDetail'
 import MyProjects from '../pages/mpdc/MyProjects'
 import ProjectForm from '../pages/mpdc/ProjectForm'
 import EngineeringDashboard from '../pages/engineering/EngineeringDashboard'
-import EngineeringGeoMapping from '../pages/engineering/GeoMapping'
 import ProjectReview from '../pages/engineering/ProjectReview'
 import ProjectReviewDetail from '../pages/engineering/ProjectReviewDetail'
 import SiteMonitoring from '../pages/engineering/SiteMonitoring'
 import ProjectMonitoringDetail from '../pages/engineering/ProjectMonitoringDetail'
 import BacDashboard from '../pages/bac/BacDashboard'
-import BacGeoMapping from '../pages/bac/GeoMapping'
 import BacProcurement from '../pages/bac/BacProcurement'
 import BacProcurementDetail from '../pages/bac/BacProcurementDetail'
 import BacContractors from '../pages/bac/BacContractors'
@@ -70,10 +67,10 @@ export default function AppRoutes() {
         <Route index element={<AdminDashboard />} />
         <Route path="projects" element={<AdminProjects />} />
         <Route path="projects/:projectId" element={<AdminProjectDetail />} />
-        <Route path="geo-map" element={<AdminGeoMapping />} />
         <Route path="staff" element={<StaffAccounts />} />
         <Route path="offices" element={<Offices />} />
         <Route path="audit-log" element={<AuditLog />} />
+        <Route path="messaging" element={<Messaging />} />
       </Route>
 
       <Route
@@ -88,9 +85,9 @@ export default function AppRoutes() {
         <Route path="projects" element={<MyProjects />} />
         <Route path="projects/new" element={<ProjectForm />} />
         <Route path="projects/:projectId" element={<ProjectForm />} />
-        <Route path="geo-map" element={<GeoMapping />} />
         <Route path="monitoring" element={<MpdcMonitoring />} />
         <Route path="monitoring/:projectId" element={<MpdcProjectMonitoringDetail />} />
+        <Route path="messaging" element={<Messaging />} />
         <Route
           path="published"
           element={
@@ -117,7 +114,7 @@ export default function AppRoutes() {
         <Route path="review/:projectId" element={<ProjectReviewDetail />} />
         <Route path="monitoring" element={<SiteMonitoring />} />
         <Route path="monitoring/:projectId" element={<ProjectMonitoringDetail />} />
-        <Route path="geo-map" element={<EngineeringGeoMapping />} />
+        <Route path="messaging" element={<Messaging />} />
       </Route>
 
       <Route
@@ -133,7 +130,7 @@ export default function AppRoutes() {
         <Route path="procurement/:projectId" element={<BacProcurementDetail />} />
         <Route path="contractors" element={<BacContractors />} />
         <Route path="contractors/:contractorId" element={<BacContractorDetail />} />
-        <Route path="geo-map" element={<BacGeoMapping />} />
+        <Route path="messaging" element={<Messaging />} />
         <Route
           path="accomplishments"
           element={

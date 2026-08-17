@@ -7,8 +7,6 @@ import Button from '../../components/ui/Button'
 import { LoadingState } from '../../components/ui/LoadingState'
 import EmptyState from '../../components/ui/EmptyState'
 import { ProjectStatusCharts } from '../../components/ui/ProjectStatusCharts'
-import { MONITORING_VISIBLE_STATUSES } from '../../utils/projectStatus'
-import { getMonitoringFlags } from '../../utils/decisionSupport'
 import { exportProjectsToExcel, toExportRow } from '../../utils/exportProjects'
 
 const STAT_TILES = [
@@ -44,9 +42,7 @@ export default function MpdcDashboard() {
     setLoadError(null)
 
     try {
-      const { data: rows, error } = await supabase
-        .from('projects')
-        .select('id, status, start_date_planned, end_date_planned')
+      const { data: rows, error } = await supabase.from('projects').select('id, status')
 
       if (error) throw error
 
@@ -57,34 +53,27 @@ export default function MpdcDashboard() {
       for (const project of projects) tally[project.status] = (tally[project.status] ?? 0) + 1
       setStatusTally(tally)
 
-      const monitoringEligible = projects.filter((p) => MONITORING_VISIBLE_STATUSES.includes(p.status))
+      // The DSS engine (see supabase/migrations/20260817100000_dss_automatic_
+      // evaluation.sql onward) persists its current decision directly on
+      // each project row, so this is a single count query instead of
+      // fetching every monitoring-eligible project's updates and
+      // recomputing flags client-side. NULL/ON_TRACK/COMPLETED are excluded
+      // by "not in (...)" naturally (NULL NOT IN (...) is unknown, not
+      // true, so those rows never match) — same "anything the DSS flagged"
+      // meaning the old client-side flag count had.
       let attention = 0
+      const { count: attentionCount, error: attentionError } = await supabase
+        .from('projects')
+        .select('id', { count: 'exact', head: true })
+        .not('dss_decision', 'in', '(ON_TRACK,COMPLETED)')
 
-      if (monitoringEligible.length > 0) {
-        const { data: updateRows, error: updatesError } = await supabase
-          .from('project_updates')
-          .select('project_id, progress_percentage, report_date')
-          .in(
-            'project_id',
-            monitoringEligible.map((p) => p.id),
-          )
-          .order('report_date', { ascending: false })
-
-        if (updatesError) {
-          // Monitoring data is supplementary to the headline counts — degrade
-          // to "unknown" (0) for the DSS tile instead of failing the whole
-          // dashboard, but still surface it instead of hiding it.
-          toast.error('Could not load monitoring data for DSS summary', updatesError.message)
-        } else {
-          const updatesByProject = new Map()
-          for (const update of updateRows ?? []) {
-            if (!updatesByProject.has(update.project_id)) updatesByProject.set(update.project_id, [])
-            updatesByProject.get(update.project_id).push(update)
-          }
-          attention = monitoringEligible.filter(
-            (p) => getMonitoringFlags(p, updatesByProject.get(p.id) ?? []).length > 0,
-          ).length
-        }
+      if (attentionError) {
+        // Supplementary to the headline counts — degrade to "unknown" (0)
+        // for the DSS tile instead of failing the whole dashboard, but
+        // still surface it instead of hiding it.
+        toast.error('Could not load DSS summary', attentionError.message)
+      } else {
+        attention = attentionCount ?? 0
       }
 
       setCounts({

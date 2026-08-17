@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { AlertTriangle, Camera, FileWarning } from 'lucide-react'
+import { Camera, FileWarning, MapPin } from 'lucide-react'
 import { supabase } from '../../lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
 import PageHeader from '../../components/ui/PageHeader'
@@ -8,6 +8,8 @@ import Button from '../../components/ui/Button'
 import Badge from '../../components/ui/Badge'
 import { LoadingState } from '../../components/ui/LoadingState'
 import EmptyState from '../../components/ui/EmptyState'
+import DssPanel from '../../components/ui/DssPanel'
+import LocationModal from '../../components/LocationModal'
 import { formatCurrency, formatDate } from '../../utils/format'
 import {
   PROJECT_STATUS_LABELS,
@@ -16,8 +18,9 @@ import {
   PROCUREMENT_STATUS_LABELS,
   PROCUREMENT_STATUS_TONES,
 } from '../../utils/projectStatus'
-import { getMonitoringFlags, getFlagTone } from '../../utils/decisionSupport'
+import { evaluateProjectDss } from '../../utils/decisionSupport'
 import { formatImageMetadata } from '../../utils/imageProcessing'
+import { isWithinDonsol } from '../../utils/geo'
 
 const IMAGE_STAGE_LABELS = {
   BEFORE: 'Before',
@@ -51,6 +54,7 @@ export default function MpdcProjectMonitoringDetail() {
   const [procurement, setProcurement] = useState(null)
   const [updates, setUpdates] = useState([])
   const [images, setImages] = useState([])
+  const [locationOpen, setLocationOpen] = useState(false)
 
   async function loadProcurement() {
     const { data, error } = await supabase
@@ -123,7 +127,7 @@ export default function MpdcProjectMonitoringDetail() {
       .from('projects')
       .select(
         `id, project_code, title, description, project_category, barangay, location_text,
-         estimated_cost, approved_budget, funding_source,
+         latitude, longitude, estimated_cost, approved_budget, funding_source,
          start_date_planned, end_date_planned, start_date_actual, end_date_actual, status,
          offices(name),
          creator:profiles!projects_created_by_fkey(full_name)`,
@@ -144,6 +148,21 @@ export default function MpdcProjectMonitoringDetail() {
 
   useEffect(() => {
     loadProject()
+  }, [projectId])
+
+  // Page-load fallback for the one case no database trigger can ever catch:
+  // a project sitting still while the calendar alone crosses its planned end
+  // date. Advisory only — the DSS panel below already renders instantly from
+  // the client-computed evaluateProjectDss() regardless of this succeeding;
+  // this just keeps the persisted audit/notification record caught up.
+  useEffect(() => {
+    if (!projectId) return
+
+    async function evaluateDss() {
+      const { error } = await supabase.rpc('evaluate_project_dss', { p_project_id: projectId })
+      if (error) console.warn('DSS evaluation fallback failed:', error.message)
+    }
+    evaluateDss()
   }, [projectId])
 
   if (loading) {
@@ -179,7 +198,7 @@ export default function MpdcProjectMonitoringDetail() {
     )
   }
 
-  const flags = getMonitoringFlags(project, updates)
+  const dssDecision = evaluateProjectDss(project, updates)
   const imagesByUpdate = images.reduce((map, image) => {
     const key = image.project_update_id ?? 'unassigned'
     if (!map.has(key)) map.set(key, [])
@@ -205,22 +224,7 @@ export default function MpdcProjectMonitoringDetail() {
       />
 
       <div className="space-y-6">
-        {flags.length > 0 ? (
-          <section className="rounded-lg border border-amber-200 bg-amber-50 p-5">
-            <h2 className="flex items-center gap-2 text-sm font-semibold text-amber-900">
-              <AlertTriangle className="h-4 w-4" aria-hidden="true" />
-              Monitoring Flags
-            </h2>
-            <ul className="mt-3 space-y-1.5">
-              {flags.map((flag) => (
-                <li key={flag.type} className="flex items-center gap-2 text-sm">
-                  <Badge tone={getFlagTone(flag.severity)}>{flag.type.replace('_', ' ')}</Badge>
-                  <span className="text-amber-900">{flag.message}</span>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ) : null}
+        <DssPanel decision={dssDecision} />
 
         <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
           <h2 className="text-sm font-semibold text-slate-800">Project Information</h2>
@@ -230,6 +234,15 @@ export default function MpdcProjectMonitoringDetail() {
             <Field label="Category">{project.project_category}</Field>
             <Field label="Barangay">{project.barangay}</Field>
             <Field label="Location">{project.location_text}</Field>
+            <Field label="Coordinates">
+              {isWithinDonsol(project.latitude, project.longitude) ? (
+                <Button variant="secondary" size="sm" icon={MapPin} onClick={() => setLocationOpen(true)}>
+                  See Location
+                </Button>
+              ) : (
+                <span className="text-slate-400">No location on file for Donsol, Sorsogon.</span>
+              )}
+            </Field>
             <Field label="Approved Budget">{formatCurrency(project.approved_budget || project.estimated_cost)}</Field>
             <Field label="Funding Source">{project.funding_source}</Field>
             <Field label="Planned Start">{formatDate(project.start_date_planned)}</Field>
@@ -355,6 +368,8 @@ export default function MpdcProjectMonitoringDetail() {
           </section>
         ) : null}
       </div>
+
+      <LocationModal open={locationOpen} project={project} onClose={() => setLocationOpen(false)} />
     </div>
   )
 }

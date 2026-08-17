@@ -78,6 +78,9 @@ export default function ProjectForm() {
   const [submissionNotes, setSubmissionNotes] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
+  const [endorsementNotes, setEndorsementNotes] = useState('')
+  const [endorsing, setEndorsing] = useState(false)
+
   async function loadOffices() {
     const { data, error } = await supabase.from('offices').select('id, code, name').order('name', { ascending: true })
     if (error) {
@@ -260,8 +263,8 @@ export default function ProjectForm() {
         .single()
 
       setSaving(false)
-      if (error) {
-        toast.error('Could not create project', error.message)
+      if (error || !data?.id) {
+        toast.error('Could not create project', error?.message ?? 'Unexpected error creating the project.')
         return
       }
       toast.success('Draft created', 'You can now upload documents and submit it for review when ready.')
@@ -409,6 +412,36 @@ export default function ProjectForm() {
     navigate('/mpdc/projects')
   }
 
+  async function handleEndorse() {
+    const confirmed = await confirm({
+      title: 'Endorse this project to BAC?',
+      description: 'BAC will be notified and can begin procurement.',
+      confirmLabel: 'Endorse to BAC',
+    })
+    if (!confirmed) return
+
+    setEndorsing(true)
+
+    // The insert alone is enough: apply_project_endorsement (DB trigger)
+    // advances the project to APPROVED (displayed as "Endorsed to BAC"),
+    // writes the audit log, and notifies BAC — this is deliberately a
+    // project_endorsements row, never a project_approvals decision.
+    const { error } = await supabase.from('project_endorsements').insert({
+      project_id: project.id,
+      endorsed_by: user.id,
+      notes: endorsementNotes.trim() || null,
+    })
+
+    setEndorsing(false)
+    if (error) {
+      toast.error('Could not endorse project', error.message)
+      return
+    }
+
+    toast.success('Project endorsed', 'BAC has been notified and can begin procurement.')
+    navigate('/mpdc/projects')
+  }
+
   if (loading) {
     return <LoadingState label="Loading project..." />
   }
@@ -428,7 +461,28 @@ export default function ProjectForm() {
     )
   }
 
+  // Guards the render gap right after Save Draft on a new project: navigate()
+  // updates the :projectId param (so isNew flips to false) a render before
+  // the projectId effect has re-run loadProject() to reset loading/project
+  // for it, leaving `project` still null for that one commit. Without this,
+  // `project.status` below throws and — with no error boundary in the app —
+  // takes down the whole page until a manual refresh.
+  if (!isNew && !project) {
+    return <LoadingState label="Loading project..." />
+  }
+
   const editable = isNew || ['DRAFT', 'RETURNED_FOR_REVISION'].includes(project.status)
+
+  // Engineering's technical review is represented by the approved_budget it
+  // enters on this same project row (ProjectReviewDetail.jsx — "Only these
+  // two fields are Engineering-editable, and only while the project is
+  // under review"). A set, positive approved_budget is the existing signal
+  // that Engineering actually reviewed the project, not just that MPDC
+  // submitted it — mirrored by the DB-side check in endorsements_insert_mpdc
+  // (20260820100000_endorsement_requires_engineering_review.sql), which is
+  // the real enforcement; this only keeps the button from being offered
+  // before that check would pass.
+  const reviewReady = !isNew && project.approved_budget != null && Number(project.approved_budget) > 0
 
   return (
     <div>
@@ -795,6 +849,44 @@ export default function ProjectForm() {
                   </Button>
                 </div>
               </div>
+            )}
+          </section>
+        ) : null}
+
+        {!isNew && project.status === 'SUBMITTED_FOR_REVIEW' ? (
+          <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
+            <h2 className="text-sm font-semibold text-slate-800">Endorse to BAC</h2>
+
+            {reviewReady ? (
+              <>
+                <p className="mt-1 text-sm text-slate-500">
+                  When the project is technically ready, endorse it to BAC to begin procurement.
+                </p>
+
+                <div className="mt-4">
+                  <label htmlFor="endorsement_notes" className="mb-1 block text-sm font-medium text-slate-700">
+                    Notes for BAC (optional)
+                  </label>
+                  <textarea
+                    id="endorsement_notes"
+                    rows={3}
+                    value={endorsementNotes}
+                    onChange={(event) => setEndorsementNotes(event.target.value)}
+                    className={textareaClass}
+                  />
+                </div>
+
+                <div className="mt-3">
+                  <Button icon={Send} onClick={handleEndorse} loading={endorsing}>
+                    Endorse to BAC
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <p className="mt-1 text-sm text-slate-500">
+                Waiting on Engineering's technical review (an approved budget has not been entered yet). This
+                project can be endorsed to BAC once that review is complete.
+              </p>
             )}
           </section>
         ) : null}

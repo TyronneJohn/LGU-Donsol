@@ -4,9 +4,9 @@ import { PROJECT_STATUS_LABELS, PROCUREMENT_STATUS_LABELS } from './projectStatu
 // Column order matches the requested report columns exactly. Every value is
 // either a real projects column or a simple join already present in the
 // schema (procurement/contractor/progress/latest monitoring date) — nothing
-// invented. Callers pass already-merged, flat rows (see GeoMapping.jsx and
-// MpdcDashboard.jsx for how those rows are built from projects +
-// project_updates + procurement).
+// invented. Callers pass already-merged, flat rows (see MpdcDashboard.jsx
+// for how those rows are built from projects + project_updates +
+// procurement).
 const COLUMNS = [
   { header: 'Project Code', key: 'project_code', type: 'text', wch: 14 },
   { header: 'Project Title', key: 'title', type: 'text', wch: 32 },
@@ -88,8 +88,6 @@ export function exportProjectsToExcel(rows, { filenamePrefix = 'project-report' 
 /**
  * Normalizes a raw Supabase project row (plus its joined progress/
  * procurement data) into the flat shape exportProjectsToExcel expects.
- * Centralized so the Dashboard's "export all" and the Geo Mapping page's
- * "export filtered" build identical rows from identical source data.
  */
 export function toExportRow(project) {
   return {

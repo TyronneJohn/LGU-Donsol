@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { FileWarning, RotateCcw, Save, Send, Upload, XCircle } from 'lucide-react'
+import { FileWarning, RotateCcw, Save, Upload, XCircle } from 'lucide-react'
 import { supabase } from '../../lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
 import { useConfirm } from '../../hooks/useConfirm'
@@ -26,9 +26,9 @@ const DOC_CATEGORY_LABELS = {
 
 // Keyed by public.approval_decision. Engineering may only record a negative
 // review decision here (project_approvals RLS enforces this at the database
-// level, not just this list) — sending the project forward to BAC is a
-// separate action (see handleEndorse) that writes to project_endorsements,
-// never a project_approvals row with decision = APPROVED.
+// level, not just this list) — endorsing the project forward to BAC is MPDC's
+// action (project_endorsements, on the MPDC project detail page), never a
+// project_approvals row with decision = APPROVED.
 const DECISION_CONFIG = {
   RETURNED_FOR_REVISION: {
     label: 'Return for Revision',
@@ -86,9 +86,6 @@ export default function ProjectReviewDetail() {
 
   const [docForm, setDocForm] = useState({ category: 'OTHER', title: '', file: null })
   const [uploading, setUploading] = useState(false)
-
-  const [endorsementNotes, setEndorsementNotes] = useState('')
-  const [endorsing, setEndorsing] = useState(false)
 
   async function loadDocuments(id) {
     const { data, error } = await supabase
@@ -342,36 +339,6 @@ export default function ProjectReviewDetail() {
       return
     }
     window.open(data.signedUrl, '_blank', 'noopener,noreferrer')
-  }
-
-  async function handleEndorse() {
-    const confirmed = await confirm({
-      title: 'Endorse this project to BAC?',
-      description: 'BAC will be notified and can begin procurement.',
-      confirmLabel: 'Endorse to BAC',
-    })
-    if (!confirmed) return
-
-    setEndorsing(true)
-
-    // The insert alone is enough: apply_project_endorsement (DB trigger)
-    // advances the project to APPROVED (displayed as "Endorsed to BAC"),
-    // writes the audit log, and notifies BAC — this is deliberately a
-    // project_endorsements row, never a project_approvals decision.
-    const { error } = await supabase.from('project_endorsements').insert({
-      project_id: project.id,
-      endorsed_by: user.id,
-      notes: endorsementNotes.trim() || null,
-    })
-
-    setEndorsing(false)
-    if (error) {
-      toast.error('Could not endorse project', error.message)
-      return
-    }
-
-    toast.success('Project endorsed', 'BAC has been notified and can begin procurement.')
-    navigate('/engineering/review')
   }
 
   if (loading) {
@@ -664,34 +631,6 @@ export default function ProjectReviewDetail() {
             </>
           )}
         </section>
-
-        {canReview ? (
-          <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
-            <h2 className="text-sm font-semibold text-slate-800">Endorse to BAC</h2>
-            <p className="mt-1 text-sm text-slate-500">
-              When the project is technically ready, endorse it to BAC to begin procurement.
-            </p>
-
-            <div className="mt-4">
-              <label htmlFor="endorsement_notes" className="mb-1 block text-sm font-medium text-slate-700">
-                Notes for BAC (optional)
-              </label>
-              <textarea
-                id="endorsement_notes"
-                rows={3}
-                value={endorsementNotes}
-                onChange={(event) => setEndorsementNotes(event.target.value)}
-                className={textareaClass}
-              />
-            </div>
-
-            <div className="mt-3">
-              <Button icon={Send} onClick={handleEndorse} loading={endorsing} disabled={submitting}>
-                Endorse to BAC
-              </Button>
-            </div>
-          </section>
-        ) : null}
       </div>
     </div>
   )

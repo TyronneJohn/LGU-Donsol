@@ -9,7 +9,7 @@ import { LoadingState } from '../../components/ui/LoadingState'
 import EmptyState from '../../components/ui/EmptyState'
 import { formatDate } from '../../utils/format'
 import { PROJECT_STATUS_LABELS, PROJECT_STATUS_TONES, MONITORING_VISIBLE_STATUSES } from '../../utils/projectStatus'
-import { getMonitoringFlags, getFlagTone } from '../../utils/decisionSupport'
+import { DSS_DECISION_LABELS, getDssSeverityTone } from '../../utils/decisionSupport'
 
 // Read-only, cross-office view: unlike Engineering's SiteMonitoring list
 // (scoped to the viewer's own office_id), MPDC monitors every project it has
@@ -30,7 +30,7 @@ export default function MpdcMonitoring() {
     const { data: projectRows, error: projectsError } = await supabase
       .from('projects')
       .select(
-        `id, project_code, title, status, end_date_planned,
+        `id, project_code, title, status, end_date_planned, dss_decision, dss_severity,
          offices(name),
          creator:profiles!projects_created_by_fkey(full_name)`,
       )
@@ -78,7 +78,6 @@ export default function MpdcMonitoring() {
         return {
           ...project,
           latestUpdate: updates[0] ?? null,
-          flags: getMonitoringFlags(project, updates),
         }
       }),
     )
@@ -116,7 +115,7 @@ export default function MpdcMonitoring() {
                 <th className="px-4 py-2.5 font-medium">Status</th>
                 <th className="px-4 py-2.5 font-medium">Progress</th>
                 <th className="px-4 py-2.5 font-medium">Last Update</th>
-                <th className="px-4 py-2.5 font-medium">Flags</th>
+                <th className="px-4 py-2.5 font-medium">DSS Decision</th>
                 <th className="px-4 py-2.5 font-medium" />
               </tr>
             </thead>
@@ -140,16 +139,12 @@ export default function MpdcMonitoring() {
                     {project.latestUpdate ? formatDate(project.latestUpdate.report_date) : '—'}
                   </td>
                   <td className="px-4 py-2.5">
-                    {project.flags.length === 0 ? (
-                      <span className="text-slate-400">—</span>
+                    {project.dss_decision ? (
+                      <Badge tone={getDssSeverityTone(project.dss_severity)}>
+                        {DSS_DECISION_LABELS[project.dss_decision] ?? project.dss_decision}
+                      </Badge>
                     ) : (
-                      <div className="flex flex-wrap gap-1">
-                        {project.flags.map((flag) => (
-                          <Badge key={flag.type} tone={getFlagTone(flag.severity)}>
-                            {flag.type.replace('_', ' ')}
-                          </Badge>
-                        ))}
-                      </div>
+                      <span className="text-slate-400">—</span>
                     )}
                   </td>
                   <td className="px-4 py-2.5 text-right">

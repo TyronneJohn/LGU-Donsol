@@ -1,4 +1,4 @@
-import { ClipboardList, Gavel, LayoutDashboard, Map, Users } from 'lucide-react'
+import { ClipboardList, Gavel, LayoutDashboard, MessageSquare, Users } from 'lucide-react'
 import DashboardShell from './DashboardShell'
 
 const navItems = [
@@ -6,7 +6,7 @@ const navItems = [
   { to: '/bac/procurement', label: 'Procurement', icon: Gavel },
   { to: '/bac/contractors', label: 'Contractors', icon: Users },
   { to: '/bac/accomplishments', label: 'Accomplishments', icon: ClipboardList },
-  { to: '/bac/geo-map', label: 'Geo Mapping', icon: Map },
+  { to: '/bac/messaging', label: 'Messaging', icon: MessageSquare },
 ]
 
 export default function BacLayout() {

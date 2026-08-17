@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { FileWarning, Gavel, Repeat, Save, Upload, UserPlus } from 'lucide-react'
+import { FileWarning, Gavel, MapPin, Repeat, Save, Upload, UserPlus } from 'lucide-react'
 import { supabase } from '../../lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
 import { useConfirm } from '../../hooks/useConfirm'
@@ -10,6 +10,7 @@ import Button from '../../components/ui/Button'
 import Badge from '../../components/ui/Badge'
 import { LoadingState } from '../../components/ui/LoadingState'
 import EmptyState from '../../components/ui/EmptyState'
+import LocationModal from '../../components/LocationModal'
 import { formatCurrency, formatDate, formatDateTime } from '../../utils/format'
 import {
   PROJECT_STATUS_LABELS,
@@ -19,6 +20,7 @@ import {
   PROCUREMENT_ELIGIBLE_STATUSES,
   BID_STATUS_LABELS,
 } from '../../utils/projectStatus'
+import { isWithinDonsol } from '../../utils/geo'
 
 const inputClass =
   'w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500'
@@ -106,6 +108,7 @@ export default function BacProcurementDetail() {
   const [rebidding, setRebidding] = useState(false)
 
   const [technicalDocuments, setTechnicalDocuments] = useState([])
+  const [locationOpen, setLocationOpen] = useState(false)
 
   async function loadContractors() {
     const { data, error } = await supabase.from('contractors').select('id, name').order('name', { ascending: true })
@@ -596,6 +599,15 @@ export default function BacProcurementDetail() {
             <Field label="Category">{project.project_category}</Field>
             <Field label="Barangay">{project.barangay}</Field>
             <Field label="Location">{project.location_text}</Field>
+            <Field label="Coordinates">
+              {isWithinDonsol(project.latitude, project.longitude) ? (
+                <Button variant="secondary" size="sm" icon={MapPin} onClick={() => setLocationOpen(true)}>
+                  See Location
+                </Button>
+              ) : (
+                <span className="text-slate-400">No location on file for Donsol, Sorsogon.</span>
+              )}
+            </Field>
             <Field label="Estimated Cost">{formatCurrency(project.estimated_cost)}</Field>
             <Field label="Approved Budget">{formatCurrency(project.approved_budget)}</Field>
             <Field label="Funding Source">{project.funding_source}</Field>
@@ -1148,6 +1160,8 @@ export default function BacProcurementDetail() {
           </section>
         ) : null}
       </div>
+
+      <LocationModal open={locationOpen} project={project} onClose={() => setLocationOpen(false)} />
     </div>
   )
 }

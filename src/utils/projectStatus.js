@@ -27,10 +27,12 @@ export const PROJECT_STATUS_TONES = {
   CANCELLED: 'red',
 }
 
-// Statuses in which Engineering can view site monitoring for a project it
-// owns, including the pre-implementation queue (APPROVED/FOR_PROCUREMENT)
-// so it's visible while BAC procurement is in progress — just not editable
-// yet. COMPLETED is view-only.
+// Statuses MPDC's own cross-office Monitoring page (src/pages/mpdc/
+// MpdcMonitoring.jsx) considers "worth tracking" — from approval onward,
+// regardless of implementing office, since MPDC's view deliberately spans
+// the procurement stage too (pre-approval projects stay in Project Review
+// instead). Kept separate from SITE_MONITORING_VISIBLE_STATUSES below,
+// which scopes Engineering's own, narrower Site Monitoring module.
 export const MONITORING_VISIBLE_STATUSES = [
   'APPROVED',
   'FOR_PROCUREMENT',
@@ -38,6 +40,12 @@ export const MONITORING_VISIBLE_STATUSES = [
   'ONGOING',
   'COMPLETED',
 ]
+
+// Statuses in which Engineering's Site Monitoring module (SiteMonitoring.jsx
+// + ProjectMonitoringDetail.jsx) lists/opens a project. Implementation-stage
+// only — APPROVED/FOR_PROCUREMENT are BAC/procurement-stage and belong to
+// BAC's own Procurement page, not here.
+export const SITE_MONITORING_VISIBLE_STATUSES = ['FOR_IMPLEMENTATION', 'ONGOING', 'COMPLETED']
 
 // Statuses in which Engineering can actually submit a monitoring update.
 // Mirrors the status list baked into the updates_insert_engineering /

@@ -11,6 +11,7 @@ export const AuthContext = createContext(undefined)
 export function AuthProvider({ children }) {
   const [session, setSession] = useState(null)
   const [role, setRole] = useState(null)
+  const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -24,18 +25,25 @@ export function AuthProvider({ children }) {
 
     async function loadRole(currentSession, thisRequestId) {
       if (!currentSession?.user) {
-        if (isMounted && thisRequestId === requestId) setRole(null)
+        if (isMounted && thisRequestId === requestId) {
+          setRole(null)
+          setProfile(null)
+        }
         return
       }
 
+      // office_id/full_name ride along on the same query (messaging needs
+      // to know "my office" and display a sender's name) — no extra round
+      // trip, and this stays independent of any dashboard data loading.
       const { data, error } = await supabase
         .from('profiles')
-        .select('role')
+        .select('role, office_id, full_name')
         .eq('id', currentSession.user.id)
         .maybeSingle()
 
       if (!isMounted || thisRequestId !== requestId) return
       setRole(error ? null : (data?.role ?? null))
+      setProfile(error ? null : (data ?? null))
     }
 
     const { data: listener } = supabase.auth.onAuthStateChange(
@@ -72,6 +80,7 @@ export function AuthProvider({ children }) {
     session,
     user: session?.user ?? null,
     role,
+    profile,
     loading,
     signOut,
   }

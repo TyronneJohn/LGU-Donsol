@@ -22,6 +22,8 @@ export const AUDIT_ACTION_LABELS = {
   DOCUMENT_UPLOADED: 'Document Uploaded',
   ACCOMPLISHMENT_UPLOADED: 'Accomplishment Uploaded',
   IMAGE_UPLOADED: 'Image Uploaded',
+  MESSAGE_SENT: 'Message Sent',
+  DSS_DECISION_RECORDED: 'DSS Decision Recorded',
 }
 
 export const AUDIT_ACTION_TONES = {
@@ -43,6 +45,8 @@ export const AUDIT_ACTION_TONES = {
   DOCUMENT_UPLOADED: 'neutral',
   ACCOMPLISHMENT_UPLOADED: 'neutral',
   IMAGE_UPLOADED: 'neutral',
+  MESSAGE_SENT: 'neutral',
+  DSS_DECISION_RECORDED: 'blue',
 }
 
 export const ENTITY_TYPE_LABELS = {
@@ -53,4 +57,5 @@ export const ENTITY_TYPE_LABELS = {
   procurement_document: 'Procurement Document',
   contractor_accomplishment: 'Accomplishment',
   project_image: 'Project Image',
+  message: 'Message',
 }

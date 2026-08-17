@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { AlertTriangle, Camera, FileWarning, MapPin, Send, X } from 'lucide-react'
+import { Camera, FileWarning, MapPin, Send, X } from 'lucide-react'
 import { supabase } from '../../lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
 import { useAuth } from '../../hooks/useAuth'
@@ -9,15 +9,18 @@ import Button from '../../components/ui/Button'
 import Badge from '../../components/ui/Badge'
 import { LoadingState } from '../../components/ui/LoadingState'
 import EmptyState from '../../components/ui/EmptyState'
+import DssPanel from '../../components/ui/DssPanel'
+import LocationModal from '../../components/LocationModal'
 import { formatDate } from '../../utils/format'
 import {
   PROJECT_STATUS_LABELS,
   PROJECT_STATUS_TONES,
-  MONITORING_VISIBLE_STATUSES,
+  SITE_MONITORING_VISIBLE_STATUSES,
   MONITORING_EDITABLE_STATUSES,
 } from '../../utils/projectStatus'
-import { getMonitoringFlags, getFlagTone } from '../../utils/decisionSupport'
+import { evaluateProjectDss } from '../../utils/decisionSupport'
 import { processImageFile, formatImageMetadata } from '../../utils/imageProcessing'
+import { isWithinDonsol } from '../../utils/geo'
 
 const inputClass =
   'w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500'
@@ -51,6 +54,7 @@ export default function ProjectMonitoringDetail() {
   const [project, setProject] = useState(null)
   const [updates, setUpdates] = useState([])
   const [images, setImages] = useState([])
+  const [locationOpen, setLocationOpen] = useState(false)
 
   const [form, setForm] = useState(EMPTY_FORM)
   const [photoQueue, setPhotoQueue] = useState([])
@@ -123,8 +127,8 @@ export default function ProjectMonitoringDetail() {
     const { data, error } = await supabase
       .from('projects')
       .select(
-        `id, project_code, title, status, start_date_planned, end_date_planned,
-         start_date_actual, end_date_actual, office_id`,
+        `id, project_code, title, status, barangay, location_text, latitude, longitude,
+         start_date_planned, end_date_planned, start_date_actual, end_date_actual, office_id`,
       )
       .eq('id', projectId)
       .maybeSingle()
@@ -143,6 +147,21 @@ export default function ProjectMonitoringDetail() {
 
   useEffect(() => {
     loadProject()
+  }, [projectId])
+
+  // Page-load fallback for the one case no database trigger can ever catch:
+  // a project sitting still while the calendar alone crosses its planned end
+  // date. Advisory only — the DSS panel below already renders instantly from
+  // the client-computed evaluateProjectDss() regardless of this succeeding;
+  // this just keeps the persisted audit/notification record caught up.
+  useEffect(() => {
+    if (!projectId) return
+
+    async function evaluateDss() {
+      const { error } = await supabase.rpc('evaluate_project_dss', { p_project_id: projectId })
+      if (error) console.warn('DSS evaluation fallback failed:', error.message)
+    }
+    evaluateDss()
   }, [projectId])
 
   function updateField(field, value) {
@@ -288,7 +307,7 @@ export default function ProjectMonitoringDetail() {
     )
   }
 
-  if (!MONITORING_VISIBLE_STATUSES.includes(project.status)) {
+  if (!SITE_MONITORING_VISIBLE_STATUSES.includes(project.status)) {
     return (
       <EmptyState
         icon={FileWarning}
@@ -304,7 +323,7 @@ export default function ProjectMonitoringDetail() {
   }
 
   const editable = MONITORING_EDITABLE_STATUSES.includes(project.status)
-  const flags = getMonitoringFlags(project, updates)
+  const dssDecision = evaluateProjectDss(project, updates)
   const imagesByUpdate = images.reduce((map, image) => {
     const key = image.project_update_id ?? 'unassigned'
     if (!map.has(key)) map.set(key, [])
@@ -323,29 +342,23 @@ export default function ProjectMonitoringDetail() {
           { label: project.project_code },
         ]}
         actions={
-          <Badge tone={PROJECT_STATUS_TONES[project.status]}>
-            {PROJECT_STATUS_LABELS[project.status] ?? project.status}
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Badge tone={PROJECT_STATUS_TONES[project.status]}>
+              {PROJECT_STATUS_LABELS[project.status] ?? project.status}
+            </Badge>
+            {isWithinDonsol(project.latitude, project.longitude) ? (
+              <Button variant="secondary" size="sm" icon={MapPin} onClick={() => setLocationOpen(true)}>
+                See Location
+              </Button>
+            ) : (
+              <span className="text-xs text-slate-400">Location unavailable</span>
+            )}
+          </div>
         }
       />
 
       <div className="space-y-6">
-        {flags.length > 0 ? (
-          <section className="rounded-lg border border-amber-200 bg-amber-50 p-5">
-            <h2 className="flex items-center gap-2 text-sm font-semibold text-amber-900">
-              <AlertTriangle className="h-4 w-4" aria-hidden="true" />
-              Monitoring Flags
-            </h2>
-            <ul className="mt-3 space-y-1.5">
-              {flags.map((flag) => (
-                <li key={flag.type} className="flex items-center gap-2 text-sm">
-                  <Badge tone={getFlagTone(flag.severity)}>{flag.type.replace('_', ' ')}</Badge>
-                  <span className="text-amber-900">{flag.message}</span>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ) : null}
+        <DssPanel decision={dssDecision} />
 
         {editable ? (
           <form onSubmit={handleSubmitUpdate} className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
@@ -606,6 +619,8 @@ export default function ProjectMonitoringDetail() {
           </section>
         ) : null}
       </div>
+
+      <LocationModal open={locationOpen} project={project} onClose={() => setLocationOpen(false)} />
     </div>
   )
 }
