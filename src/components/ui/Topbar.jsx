@@ -1,4 +1,5 @@
 import { Menu } from 'lucide-react'
+import MessageButton from './MessageButton'
 import NotificationBell from './NotificationBell'
 import UserMenu from './UserMenu'
 
@@ -18,6 +19,7 @@ export default function Topbar({ title, onMenuClick }) {
       </div>
 
       <div className="flex shrink-0 items-center gap-1 sm:gap-2">
+        <MessageButton />
         <NotificationBell />
         <UserMenu />
       </div>

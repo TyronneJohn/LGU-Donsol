@@ -1,11 +1,10 @@
-import { Activity, FolderKanban, Globe, LayoutDashboard, MessageSquare } from 'lucide-react'
+import { Activity, FolderKanban, Globe, LayoutDashboard } from 'lucide-react'
 import DashboardShell from './DashboardShell'
 
 const navItems = [
   { to: '/mpdc', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/mpdc/projects', label: 'My Projects', icon: FolderKanban },
   { to: '/mpdc/monitoring', label: 'Monitoring', icon: Activity },
-  { to: '/mpdc/messaging', label: 'Messaging', icon: MessageSquare },
   { to: '/mpdc/published', label: 'Published Projects', icon: Globe },
 ]
 
