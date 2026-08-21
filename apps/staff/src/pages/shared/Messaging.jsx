@@ -134,13 +134,22 @@ export default function Messaging() {
       current.map((message) => (unreadIds.includes(message.id) ? { ...message, is_read: true, read_at: now } : message)),
     )
 
-    supabase.from('messages').update({ is_read: true, read_at: now }).in('id', unreadIds)
+    supabase
+      .from('messages')
+      .update({ is_read: true, read_at: now })
+      .in('id', unreadIds)
+      .then(({ error }) => {
+        if (error) toast.error('Could not mark messages as read', error.message)
+      })
     supabase
       .from('notifications')
       .update({ is_read: true, read_at: now })
       .eq('recipient_id', user.id)
       .eq('category', 'NEW_MESSAGE')
       .in('related_message_id', unreadIds)
+      .then(({ error }) => {
+        if (error) toast.error('Could not mark notifications as read', error.message)
+      })
   }, [selectedRole, messages])
 
   function selectRole(value) {
@@ -200,13 +209,17 @@ export default function Messaging() {
       if (notifyError) toast.error('Sent, but could not notify the recipient office', notifyError.message)
     }
 
-    supabase.rpc('write_audit_log', {
-      p_action: 'MESSAGE_SENT',
-      p_entity_type: 'message',
-      p_entity_id: inserted.id,
-      p_description: `Message sent to ${ROLE_LABELS[selectedRole]}`,
-      p_metadata: { recipient_role: selectedRole, project_id: attachedProject?.id ?? null },
-    })
+    supabase
+      .rpc('write_audit_log', {
+        p_action: 'MESSAGE_SENT',
+        p_entity_type: 'message',
+        p_entity_id: inserted.id,
+        p_description: `Message sent to ${ROLE_LABELS[selectedRole]}`,
+        p_metadata: { recipient_role: selectedRole, project_id: attachedProject?.id ?? null },
+      })
+      .then(({ error }) => {
+        if (error) console.error('write_audit_log failed', error)
+      })
   }
 
   async function openProjectPanel(projectId) {
@@ -234,9 +247,9 @@ export default function Messaging() {
   return (
     <div>
       <PageHeader
-        title="Messaging"
-        description="Send and receive messages with the other offices."
-        breadcrumbs={[{ label: 'Dashboard', to: ROLE_HOME_PATH[role] }, { label: 'Messaging' }]}
+        title="Messages"
+        description="Send and receive messages with the other offices and the admin."
+        breadcrumbs={[{ label: 'Dashboard', to: ROLE_HOME_PATH[role] }, { label: 'Messages' }]}
       />
 
       {loading ? (

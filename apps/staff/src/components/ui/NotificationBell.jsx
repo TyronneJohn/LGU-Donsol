@@ -3,9 +3,19 @@ import { useNavigate } from 'react-router-dom'
 import { useDismissablePopover } from '../../hooks/useDismissablePopover'
 import { useNotifications } from '../../hooks/useNotifications'
 import { useAuth } from '../../hooks/useAuth'
-import { ROLE_HOME_PATH } from '../../utils/roles'
+import { ROLE_HOME_PATH, ROLE_LABELS } from '../../utils/roles'
 import { formatRelativeTime } from '@shared/utils/format'
 import EmptyState from '@shared/components/ui/EmptyState'
+
+// Where clicking a non-message notification should land, per role — the one
+// project page each role can always open regardless of the project's current
+// stage (plain `.eq('id', projectId)` lookups, no status gating).
+const PROJECT_NOTIFICATION_PATH = {
+  admin: (projectId) => `/admin/projects/${projectId}`,
+  mpdc: (projectId) => `/mpdc/monitoring/${projectId}`,
+  engineering: (projectId) => `/engineering/monitoring/${projectId}`,
+  bac: (projectId) => `/bac/procurement/${projectId}`,
+}
 
 export default function NotificationBell() {
   const { open, setOpen, close, containerRef } = useDismissablePopover()
@@ -15,13 +25,16 @@ export default function NotificationBell() {
 
   async function handleSelect(notification) {
     if (!notification.is_read) await markOneRead(notification.id)
+    close()
 
     if (notification.category === 'NEW_MESSAGE' && notification.sender?.role && role) {
-      close()
       navigate(`${ROLE_HOME_PATH[role]}/messaging?with=${notification.sender.role}`)
       return
     }
-    close()
+
+    if (notification.related_project_id && PROJECT_NOTIFICATION_PATH[role]) {
+      navigate(PROJECT_NOTIFICATION_PATH[role](notification.related_project_id))
+    }
   }
 
   return (
@@ -104,8 +117,16 @@ export default function NotificationBell() {
                       {notification.message ? (
                         <span className="mt-0.5 block truncate text-xs text-slate-500">{notification.message}</span>
                       ) : null}
-                      <span className="mt-0.5 block text-xs text-slate-400">
-                        {formatRelativeTime(notification.created_at)}
+                      <span className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-400">
+                        <span className="font-medium text-slate-500">
+                          {notification.sender?.role
+                            ? ROLE_LABELS[notification.sender.role]
+                            : notification.category === 'NEW_MESSAGE'
+                              ? null
+                              : 'System'}
+                        </span>
+                        <span aria-hidden="true">·</span>
+                        <span>{formatRelativeTime(notification.created_at)}</span>
                       </span>
                     </span>
                   </button>
