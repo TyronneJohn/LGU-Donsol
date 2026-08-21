@@ -4,10 +4,13 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "lint": "oxlint",
-    "preview": "vite preview"
+    "dev:public": "vite --config apps/public/vite.config.js",
+    "dev:staff": "vite --config apps/staff/vite.config.js",
+    "build:public": "vite build --config apps/public/vite.config.js",
+    "build:staff": "vite build --config apps/staff/vite.config.js",
+    "preview:public": "vite preview --config apps/public/vite.config.js",
+    "preview:staff": "vite preview --config apps/staff/vite.config.js",
+    "lint": "oxlint"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.2",
