@@ -9,8 +9,6 @@ import { LoadingState } from '@shared/components/ui/LoadingState'
 import EmptyState from '@shared/components/ui/EmptyState'
 import { formatCurrency, formatDate } from '@shared/utils/format'
 import {
-  PROJECT_STATUS_LABELS,
-  PROJECT_STATUS_TONES,
   PROCUREMENT_STATUS_LABELS,
   PROCUREMENT_STATUS_TONES,
   PROCUREMENT_ELIGIBLE_STATUSES,
@@ -145,7 +143,6 @@ export default function BacProcurement() {
                 <th className="px-4 py-2.5 font-medium">Project Code</th>
                 <th className="px-4 py-2.5 font-medium">Title</th>
                 <th className="px-4 py-2.5 font-medium">Office</th>
-                <th className="px-4 py-2.5 font-medium">Project Status</th>
                 <th className="px-4 py-2.5 font-medium">Procurement Status</th>
                 <th className="px-4 py-2.5 font-medium">ABC</th>
                 <th className="px-4 py-2.5 font-medium">Contractor</th>
@@ -162,11 +159,6 @@ export default function BacProcurement() {
                     {!row.is_current ? <span className="ml-2 text-xs text-slate-400">(past cycle)</span> : null}
                   </td>
                   <td className="px-4 py-2.5 text-slate-600">{row.projects?.offices?.name ?? '—'}</td>
-                  <td className="px-4 py-2.5">
-                    <Badge tone={PROJECT_STATUS_TONES[row.projects?.status]}>
-                      {PROJECT_STATUS_LABELS[row.projects?.status] ?? row.projects?.status}
-                    </Badge>
-                  </td>
                   <td className="px-4 py-2.5">
                     {row.status ? (
                       <Badge tone={PROCUREMENT_STATUS_TONES[row.status]}>

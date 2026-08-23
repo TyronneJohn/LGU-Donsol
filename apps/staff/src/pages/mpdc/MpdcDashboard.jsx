@@ -11,14 +11,9 @@ import { exportProjectsToExcel, toExportRow } from '../../utils/exportProjects'
 
 const STAT_TILES = [
   { key: 'total', label: 'Total Projects' },
-  { key: 'draft', label: 'Draft' },
   { key: 'submitted', label: 'Submitted to Engineering' },
-  { key: 'endorsed', label: 'Endorsed to BAC' },
-  { key: 'procurement', label: 'In Procurement' },
-  { key: 'implementation', label: 'Under Implementation' },
   { key: 'ongoing', label: 'Ongoing' },
   { key: 'completed', label: 'Completed' },
-  { key: 'attention', label: 'Requiring Attention (DSS)', tone: 'amber' },
 ]
 
 export default function MpdcDashboard() {
@@ -53,39 +48,11 @@ export default function MpdcDashboard() {
       for (const project of projects) tally[project.status] = (tally[project.status] ?? 0) + 1
       setStatusTally(tally)
 
-      // The DSS engine (see supabase/migrations/20260817100000_dss_automatic_
-      // evaluation.sql onward) persists its current decision directly on
-      // each project row, so this is a single count query instead of
-      // fetching every monitoring-eligible project's updates and
-      // recomputing flags client-side. NULL/ON_TRACK/COMPLETED are excluded
-      // by "not in (...)" naturally (NULL NOT IN (...) is unknown, not
-      // true, so those rows never match) — same "anything the DSS flagged"
-      // meaning the old client-side flag count had.
-      let attention = 0
-      const { count: attentionCount, error: attentionError } = await supabase
-        .from('projects')
-        .select('id', { count: 'exact', head: true })
-        .not('dss_decision', 'in', '(ON_TRACK,COMPLETED)')
-
-      if (attentionError) {
-        // Supplementary to the headline counts — degrade to "unknown" (0)
-        // for the DSS tile instead of failing the whole dashboard, but
-        // still surface it instead of hiding it.
-        toast.error('Could not load DSS summary', attentionError.message)
-      } else {
-        attention = attentionCount ?? 0
-      }
-
       setCounts({
         total: projects.length,
-        draft: byStatus('DRAFT'),
         submitted: byStatus('SUBMITTED_FOR_REVIEW'),
-        endorsed: byStatus('APPROVED'),
-        procurement: byStatus('FOR_PROCUREMENT'),
-        implementation: byStatus('FOR_IMPLEMENTATION'),
         ongoing: byStatus('ONGOING'),
         completed: byStatus('COMPLETED'),
-        attention,
       })
     } catch (error) {
       setLoadError(error.message || 'Something went wrong while loading the dashboard.')
@@ -176,20 +143,11 @@ export default function MpdcDashboard() {
           }
         />
       ) : (
-        <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
           {STAT_TILES.map((tile) => (
             <div key={tile.key} className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-4">
               <p className="text-xs font-medium uppercase tracking-wide text-slate-400">{tile.label}</p>
-              <p
-                className={`mt-1 flex items-center gap-1.5 text-2xl font-semibold ${
-                  tile.tone === 'amber' && counts[tile.key] > 0 ? 'text-amber-600' : 'text-slate-800'
-                }`}
-              >
-                {tile.tone === 'amber' && counts[tile.key] > 0 ? (
-                  <AlertTriangle className="h-5 w-5" aria-hidden="true" />
-                ) : null}
-                {counts[tile.key]}
-              </p>
+              <p className="mt-1 text-2xl font-semibold text-slate-800">{counts[tile.key]}</p>
             </div>
           ))}
         </div>

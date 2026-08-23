@@ -10,8 +10,6 @@ import EmptyState from '@shared/components/ui/EmptyState'
 import { ProjectStatusCharts } from '../../components/ui/ProjectStatusCharts'
 import { formatCurrency } from '@shared/utils/format'
 import {
-  PROJECT_STATUS_LABELS,
-  PROJECT_STATUS_TONES,
   PROCUREMENT_STATUS_LABELS,
   PROCUREMENT_STATUS_TONES,
   PROCUREMENT_ELIGIBLE_STATUSES,
@@ -129,7 +127,6 @@ export default function BacDashboard() {
                   <th className="px-4 py-2.5 font-medium">Project Code</th>
                   <th className="px-4 py-2.5 font-medium">Title</th>
                   <th className="px-4 py-2.5 font-medium">Office</th>
-                  <th className="px-4 py-2.5 font-medium">Project Status</th>
                   <th className="px-4 py-2.5 font-medium">Procurement Status</th>
                   <th className="px-4 py-2.5 font-medium">ABC</th>
                   <th className="px-4 py-2.5 font-medium">Contractor</th>
@@ -142,11 +139,6 @@ export default function BacDashboard() {
                     <td className="px-4 py-2.5 text-slate-800">{project.project_code ?? '—'}</td>
                     <td className="px-4 py-2.5 text-slate-800">{project.title}</td>
                     <td className="px-4 py-2.5 text-slate-600">{project.offices?.name ?? '—'}</td>
-                    <td className="px-4 py-2.5">
-                      <Badge tone={PROJECT_STATUS_TONES[project.status]}>
-                        {PROJECT_STATUS_LABELS[project.status] ?? project.status}
-                      </Badge>
-                    </td>
                     <td className="px-4 py-2.5">
                       {project.procurement ? (
                         <Badge tone={PROCUREMENT_STATUS_TONES[project.procurement.status]}>

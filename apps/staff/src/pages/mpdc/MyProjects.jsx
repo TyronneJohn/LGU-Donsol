@@ -71,7 +71,7 @@ export default function MyProjects() {
                 <th className="px-4 py-2.5 font-medium">Project Code</th>
                 <th className="px-4 py-2.5 font-medium">Title</th>
                 <th className="px-4 py-2.5 font-medium">Implementing Office</th>
-                <th className="px-4 py-2.5 font-medium">Est. Cost</th>
+                <th className="px-4 py-2.5 font-medium">Total Cost</th>
                 <th className="px-4 py-2.5 font-medium">Status</th>
                 <th className="px-4 py-2.5 font-medium">Created</th>
                 <th className="px-4 py-2.5 font-medium" />

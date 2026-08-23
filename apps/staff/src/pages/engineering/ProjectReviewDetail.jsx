@@ -7,11 +7,13 @@ import { useConfirm } from '../../hooks/useConfirm'
 import { useAuth } from '../../hooks/useAuth'
 import PageHeader from '../../components/ui/PageHeader'
 import Button from '../../components/ui/Button'
+import CurrencyInput from '../../components/ui/CurrencyInput'
 import Badge from '@shared/components/ui/Badge'
 import { LoadingState } from '@shared/components/ui/LoadingState'
 import EmptyState from '@shared/components/ui/EmptyState'
 import { formatCurrency, formatDate, formatDateTime } from '@shared/utils/format'
 import { PROJECT_STATUS_LABELS, PROJECT_STATUS_TONES } from '@shared/utils/projectStatus'
+import { getDocumentViewUrl } from '@shared/utils/documentViewer'
 
 const inputClass =
   'w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500'
@@ -83,8 +85,10 @@ export default function ProjectReviewDetail() {
 
   const [fieldsForm, setFieldsForm] = useState({ approved_budget: '', funding_source: '' })
   const [savingFields, setSavingFields] = useState(false)
+  const [editingBudgetFields, setEditingBudgetFields] = useState(false)
 
-  const [docForm, setDocForm] = useState({ category: 'OTHER', title: '', file: null })
+  const [docForm, setDocForm] = useState({ category: 'OTHER', title: '', files: [] })
+  const [docInputKey, setDocInputKey] = useState(0)
   const [uploading, setUploading] = useState(false)
 
   async function loadDocuments(id) {
@@ -275,10 +279,12 @@ export default function ProjectReviewDetail() {
     event.preventDefault()
     setSavingFields(true)
 
+    const approvedBudget = fieldsForm.approved_budget === '' ? null : Number(fieldsForm.approved_budget)
+
     const { error } = await supabase
       .from('projects')
       .update({
-        approved_budget: fieldsForm.approved_budget === '' ? null : Number(fieldsForm.approved_budget),
+        approved_budget: approvedBudget,
         funding_source: fieldsForm.funding_source.trim() || null,
       })
       .eq('id', project.id)
@@ -288,57 +294,103 @@ export default function ProjectReviewDetail() {
       toast.error('Could not save changes', error.message)
       return
     }
+
+    // Only notify MPDC once there's actually something for them to act
+    // on — a positive approved_budget is the same "review technically
+    // ready" signal MPDC's own endorse button already gates on
+    // (ProjectForm.jsx's reviewReady), not just any save. Recipient is the
+    // project's own creator specifically, not every active MPDC staff
+    // member — endorsing is RLS-gated to created_by = auth.uid()
+    // (projects_update_scoped), so anyone else literally can't act on
+    // this, same reasoning sendDecisionNotification() below already uses.
+    if (approvedBudget != null && approvedBudget > 0) {
+      const { error: notifyError } = await supabase.from('notifications').insert({
+        recipient_id: project.created_by,
+        category: 'PROJECT_REVIEW_READY',
+        title: `Technical review ready: ${project.title}`,
+        message: `${project.project_code} has an approved budget on file and can now be endorsed to BAC.`,
+        related_project_id: project.id,
+      })
+      if (notifyError) toast.error('Saved, but could not notify MPDC', notifyError.message)
+    }
+
     toast.success('Changes saved')
-    loadData()
+    navigate('/engineering/review')
+  }
+
+  function handleCancelEditFields() {
+    setFieldsForm({
+      approved_budget: project.approved_budget ?? '',
+      funding_source: project.funding_source ?? '',
+    })
+    setEditingBudgetFields(false)
   }
 
   async function handleUploadDocument(event) {
     event.preventDefault()
-    if (!docForm.file) {
-      toast.error('Choose a file', 'Select a file to upload.')
+    if (docForm.files.length === 0) {
+      toast.error('Choose a file', 'Select at least one file to upload.')
       return
     }
 
     setUploading(true)
-    const path = `${project.id}/${crypto.randomUUID()}-${docForm.file.name}`
 
-    const { error: uploadError } = await supabase.storage.from('project-documents').upload(path, docForm.file)
-    if (uploadError) {
-      toast.error('Could not upload file', uploadError.message)
-      setUploading(false)
-      return
-    }
+    // The Title field only makes sense when uploading a single file — with
+    // several selected at once, each document takes its own file name
+    // instead (same fallback the single-file case already used when Title
+    // was left blank).
+    const useTitle = docForm.files.length === 1
 
-    const { error: insertError } = await supabase.from('project_documents').insert({
-      project_id: project.id,
-      uploaded_by: user.id,
-      document_category: docForm.category,
-      title: docForm.title.trim() || docForm.file.name,
-      storage_path: path,
-      file_name: docForm.file.name,
-    })
+    const results = await Promise.all(
+      docForm.files.map(async (file) => {
+        const path = `${project.id}/${crypto.randomUUID()}-${file.name}`
+        const { error: uploadError } = await supabase.storage
+          .from('project-documents')
+          .upload(path, file, { contentType: file.type || undefined })
+        if (uploadError) return { file, error: uploadError }
+
+        const { error: insertError } = await supabase.from('project_documents').insert({
+          project_id: project.id,
+          uploaded_by: user.id,
+          document_category: docForm.category,
+          title: (useTitle ? docForm.title.trim() : '') || file.name,
+          storage_path: path,
+          file_name: file.name,
+        })
+        return { file, error: insertError }
+      }),
+    )
 
     setUploading(false)
-    if (insertError) {
-      toast.error('Could not record document', insertError.message)
-      return
+
+    const failed = results.filter((result) => result.error)
+    const succeededCount = results.length - failed.length
+
+    if (failed.length > 0) {
+      toast.error(
+        succeededCount === 0 ? 'Could not upload documents' : `${succeededCount} uploaded, ${failed.length} failed`,
+        failed.map((result) => `${result.file.name}: ${result.error.message}`).join('; '),
+      )
+    }
+    if (succeededCount > 0) {
+      toast.success(succeededCount === 1 ? 'Document uploaded' : `${succeededCount} documents uploaded`)
     }
 
-    setDocForm({ category: 'OTHER', title: '', file: null })
-    toast.success('Document uploaded')
+    setDocForm({ category: 'OTHER', title: '', files: [] })
+    setDocInputKey((current) => current + 1)
     loadDocuments(project.id)
   }
 
   async function handleViewDocument(doc) {
     const { data, error } = await supabase.storage
       .from('project-documents')
-      .createSignedUrl(doc.storage_path, 60)
+      .createSignedUrl(doc.storage_path, 300)
 
     if (error || !data?.signedUrl) {
       toast.error('Could not open document', error?.message ?? 'Try again.')
       return
     }
-    window.open(data.signedUrl, '_blank', 'noopener,noreferrer')
+    window.open(getDocumentViewUrl(data.signedUrl, doc.file_name), '_blank', 'noopener,noreferrer')
   }
 
   if (loading) {
@@ -426,25 +478,37 @@ export default function ProjectReviewDetail() {
         ) : null}
 
         <form onSubmit={handleSaveFields} className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
-          <h2 className="text-sm font-semibold text-slate-800">Engineering Details</h2>
-          <p className="mt-0.5 text-xs text-slate-400">
-            Only these two fields are Engineering-editable, and only while the project is under review.
-          </p>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-800">Engineering Details</h2>
+              <p className="mt-0.5 text-xs text-slate-400">
+                Only these two fields are Engineering-editable, and only while the project is under review.
+              </p>
+            </div>
+            {canReview && project.approved_budget != null && !editingBudgetFields ? (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => setEditingBudgetFields(true)}
+              >
+                Edit
+              </Button>
+            ) : null}
+          </div>
 
-          <fieldset disabled={!canReview} className="mt-4 grid gap-4 sm:grid-cols-2">
+          <fieldset
+            disabled={!canReview || (project.approved_budget != null && !editingBudgetFields)}
+            className="mt-4 grid gap-4 sm:grid-cols-2"
+          >
             <div>
               <label htmlFor="approved_budget" className="mb-1 block text-sm font-medium text-slate-700">
                 Approved Budget (PHP)
               </label>
-              <input
+              <CurrencyInput
                 id="approved_budget"
-                type="number"
-                step="0.01"
-                min="0"
                 value={fieldsForm.approved_budget}
-                onChange={(event) =>
-                  setFieldsForm((current) => ({ ...current, approved_budget: event.target.value }))
-                }
+                onChange={(value) => setFieldsForm((current) => ({ ...current, approved_budget: value }))}
                 className={inputClass}
               />
             </div>
@@ -463,11 +527,16 @@ export default function ProjectReviewDetail() {
             </div>
           </fieldset>
 
-          {canReview ? (
-            <div className="mt-4">
+          {canReview && (project.approved_budget == null || editingBudgetFields) ? (
+            <div className="mt-4 flex gap-2">
               <Button type="submit" size="sm" icon={Save} loading={savingFields}>
                 Save Changes
               </Button>
+              {editingBudgetFields ? (
+                <Button type="button" variant="secondary" size="sm" onClick={handleCancelEditFields}>
+                  Cancel
+                </Button>
+              ) : null}
             </div>
           ) : null}
         </form>
@@ -519,29 +588,39 @@ export default function ProjectReviewDetail() {
                 </select>
               </div>
 
-              <div>
-                <label htmlFor="doc_title" className="mb-1 block text-sm font-medium text-slate-700">
-                  Title (optional)
-                </label>
-                <input
-                  id="doc_title"
-                  value={docForm.title}
-                  onChange={(event) => setDocForm((current) => ({ ...current, title: event.target.value }))}
-                  className={inputClass}
-                />
-              </div>
+              {docForm.files.length <= 1 ? (
+                <div>
+                  <label htmlFor="doc_title" className="mb-1 block text-sm font-medium text-slate-700">
+                    Title (optional)
+                  </label>
+                  <input
+                    id="doc_title"
+                    value={docForm.title}
+                    onChange={(event) => setDocForm((current) => ({ ...current, title: event.target.value }))}
+                    className={inputClass}
+                  />
+                </div>
+              ) : (
+                <div className="flex items-end">
+                  <p className="text-xs text-slate-500">
+                    {docForm.files.length} files selected — each will use its own file name as the title.
+                  </p>
+                </div>
+              )}
 
               <div>
                 <label htmlFor="doc_file" className="mb-1 block text-sm font-medium text-slate-700">
-                  File
+                  File(s)
                 </label>
                 <input
+                  key={docInputKey}
                   id="doc_file"
                   type="file"
+                  multiple
                   onChange={(event) =>
-                    setDocForm((current) => ({ ...current, file: event.target.files?.[0] ?? null }))
+                    setDocForm((current) => ({ ...current, files: Array.from(event.target.files ?? []) }))
                   }
-                  className="block w-full text-sm text-slate-600"
+                  className="block w-full text-sm text-slate-600 file:mr-3 file:cursor-pointer file:rounded-md file:border file:border-slate-300 file:bg-white file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-50"
                 />
               </div>
 

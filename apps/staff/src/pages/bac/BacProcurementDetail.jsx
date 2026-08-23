@@ -7,6 +7,7 @@ import { useConfirm } from '../../hooks/useConfirm'
 import { useAuth } from '../../hooks/useAuth'
 import PageHeader from '../../components/ui/PageHeader'
 import Button from '../../components/ui/Button'
+import CurrencyInput from '../../components/ui/CurrencyInput'
 import Badge from '@shared/components/ui/Badge'
 import { LoadingState } from '@shared/components/ui/LoadingState'
 import EmptyState from '@shared/components/ui/EmptyState'
@@ -20,6 +21,7 @@ import {
   PROCUREMENT_ELIGIBLE_STATUSES,
   BID_STATUS_LABELS,
 } from '@shared/utils/projectStatus'
+import { getDocumentViewUrl } from '@shared/utils/documentViewer'
 import { isWithinDonsol } from '@shared/utils/geo'
 
 const inputClass =
@@ -465,7 +467,9 @@ export default function BacProcurementDetail() {
     setUploadingDoc(true)
     const path = `${procurement.id}/${crypto.randomUUID()}-${docForm.file.name}`
 
-    const { error: uploadError } = await supabase.storage.from('procurement-documents').upload(path, docForm.file)
+    const { error: uploadError } = await supabase.storage
+      .from('procurement-documents')
+      .upload(path, docForm.file, { contentType: docForm.file.type || undefined })
     if (uploadError) {
       toast.error('Could not upload file', uploadError.message)
       setUploadingDoc(false)
@@ -492,21 +496,21 @@ export default function BacProcurementDetail() {
   }
 
   async function handleViewDocument(doc) {
-    const { data, error } = await supabase.storage.from('procurement-documents').createSignedUrl(doc.storage_path, 60)
+    const { data, error } = await supabase.storage.from('procurement-documents').createSignedUrl(doc.storage_path, 300)
     if (error || !data?.signedUrl) {
       toast.error('Could not open document', error?.message ?? 'Try again.')
       return
     }
-    window.open(data.signedUrl, '_blank', 'noopener,noreferrer')
+    window.open(getDocumentViewUrl(data.signedUrl, doc.file_name), '_blank', 'noopener,noreferrer')
   }
 
   async function handleViewTechnicalDocument(doc) {
-    const { data, error } = await supabase.storage.from('project-documents').createSignedUrl(doc.storage_path, 60)
+    const { data, error } = await supabase.storage.from('project-documents').createSignedUrl(doc.storage_path, 300)
     if (error || !data?.signedUrl) {
       toast.error('Could not open document', error?.message ?? 'Try again.')
       return
     }
-    window.open(data.signedUrl, '_blank', 'noopener,noreferrer')
+    window.open(getDocumentViewUrl(data.signedUrl, doc.file_name), '_blank', 'noopener,noreferrer')
   }
 
   async function handleRebid() {
@@ -676,13 +680,10 @@ export default function BacProcurementDetail() {
                 <label htmlFor="abc" className="mb-1 block text-sm font-medium text-slate-700">
                   Approved Budget for the Contract (ABC)
                 </label>
-                <input
+                <CurrencyInput
                   id="abc"
-                  type="number"
-                  step="0.01"
-                  min="0"
                   value={startForm.abc_amount}
-                  onChange={(event) => setStartForm((f) => ({ ...f, abc_amount: event.target.value }))}
+                  onChange={(value) => setStartForm((f) => ({ ...f, abc_amount: value }))}
                   className={inputClass}
                 />
               </div>
@@ -732,13 +733,10 @@ export default function BacProcurementDetail() {
                   <label htmlFor="edit_abc" className="mb-1 block text-sm font-medium text-slate-700">
                     ABC
                   </label>
-                  <input
+                  <CurrencyInput
                     id="edit_abc"
-                    type="number"
-                    step="0.01"
-                    min="0"
                     value={editForm.abc_amount}
-                    onChange={(event) => setEditForm((f) => ({ ...f, abc_amount: event.target.value }))}
+                    onChange={(value) => setEditForm((f) => ({ ...f, abc_amount: value }))}
                     className={inputClass}
                   />
                 </div>
@@ -900,13 +898,10 @@ export default function BacProcurementDetail() {
                   <label htmlFor="bidder_amount" className="mb-1 block text-sm font-medium text-slate-700">
                     Bid Amount
                   </label>
-                  <input
+                  <CurrencyInput
                     id="bidder_amount"
-                    type="number"
-                    step="0.01"
-                    min="0"
                     value={bidderForm.bid_amount}
-                    onChange={(event) => setBidderForm((f) => ({ ...f, bid_amount: event.target.value }))}
+                    onChange={(value) => setBidderForm((f) => ({ ...f, bid_amount: value }))}
                     className={inputClass}
                   />
                 </div>
@@ -974,13 +969,10 @@ export default function BacProcurementDetail() {
                       <label htmlFor="contract_amount" className="mb-1 block text-sm font-medium text-slate-700">
                         Contract Amount
                       </label>
-                      <input
+                      <CurrencyInput
                         id="contract_amount"
-                        type="number"
-                        step="0.01"
-                        min="0"
                         value={contractForm.contract_amount}
-                        onChange={(event) => setContractForm((f) => ({ ...f, contract_amount: event.target.value }))}
+                        onChange={(value) => setContractForm((f) => ({ ...f, contract_amount: value }))}
                         className={inputClass}
                       />
                     </div>

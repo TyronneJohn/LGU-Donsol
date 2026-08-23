@@ -15,6 +15,7 @@ import { formatCurrency, formatDate, formatDateTime } from '@shared/utils/format
 import { PROJECT_STATUS_LABELS, PROJECT_STATUS_TONES } from '@shared/utils/projectStatus'
 import { evaluateProjectDss } from '@shared/utils/decisionSupport'
 import { isWithinDonsol } from '@shared/utils/geo'
+import { getDocumentViewUrl } from '@shared/utils/documentViewer'
 
 const DOC_CATEGORY_LABELS = {
   PROGRAM_OF_WORKS: 'Program of Works',
@@ -153,12 +154,12 @@ export default function AdminProjectDetail() {
   }, [projectId])
 
   async function handleViewDocument(doc) {
-    const { data, error } = await supabase.storage.from('project-documents').createSignedUrl(doc.storage_path, 60)
+    const { data, error } = await supabase.storage.from('project-documents').createSignedUrl(doc.storage_path, 300)
     if (error || !data?.signedUrl) {
       toast.error('Could not open document', error?.message ?? 'Try again.')
       return
     }
-    window.open(data.signedUrl, '_blank', 'noopener,noreferrer')
+    window.open(getDocumentViewUrl(data.signedUrl, doc.file_name), '_blank', 'noopener,noreferrer')
   }
 
   async function handleDelete() {

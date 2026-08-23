@@ -7,14 +7,36 @@ import { ROLE_HOME_PATH, ROLE_LABELS } from '../../utils/roles'
 import { formatRelativeTime } from '@shared/utils/format'
 import EmptyState from '@shared/components/ui/EmptyState'
 
-// Where clicking a non-message notification should land, per role — the one
-// project page each role can always open regardless of the project's current
-// stage (plain `.eq('id', projectId)` lookups, no status gating).
-const PROJECT_NOTIFICATION_PATH = {
-  admin: (projectId) => `/admin/projects/${projectId}`,
-  mpdc: (projectId) => `/mpdc/monitoring/${projectId}`,
-  engineering: (projectId) => `/engineering/monitoring/${projectId}`,
-  bac: (projectId) => `/bac/procurement/${projectId}`,
+// Categories that fire while a project is still pre-approval (draft,
+// submitted, returned, rejected, or awaiting endorsement) — none of those
+// statuses are in MONITORING_VISIBLE_STATUSES / SITE_MONITORING_VISIBLE_
+// STATUSES (projectStatus.js), so routing these to a monitoring page would
+// 404/"not yet monitoring" even though the notification itself is valid.
+const PRE_APPROVAL_CATEGORIES = new Set([
+  'PROJECT_SUBMITTED',
+  'PROJECT_RETURNED',
+  'PROJECT_REJECTED',
+  'PROJECT_REVIEW_READY',
+])
+
+// Where clicking a non-message notification should land, per role and
+// category — the monitoring pages only cover a project once it's actually
+// APPROVED+ (MPDC) / FOR_IMPLEMENTATION+ (Engineering), so a pre-approval
+// notification instead goes to the page each role actually manages that
+// stage from. Admin's project detail has no status gating at all (plain
+// `.eq('id', projectId)` lookup), so it's the same for every category.
+function getProjectNotificationPath(role, category, projectId) {
+  if (role === 'admin') return `/admin/projects/${projectId}`
+  if (role === 'bac') return `/bac/procurement/${projectId}`
+  if (role === 'mpdc') {
+    return PRE_APPROVAL_CATEGORIES.has(category) ? `/mpdc/projects/${projectId}` : `/mpdc/monitoring/${projectId}`
+  }
+  if (role === 'engineering') {
+    return PRE_APPROVAL_CATEGORIES.has(category)
+      ? `/engineering/review/${projectId}`
+      : `/engineering/monitoring/${projectId}`
+  }
+  return null
 }
 
 export default function NotificationBell() {
@@ -32,9 +54,10 @@ export default function NotificationBell() {
       return
     }
 
-    if (notification.related_project_id && PROJECT_NOTIFICATION_PATH[role]) {
-      navigate(PROJECT_NOTIFICATION_PATH[role](notification.related_project_id))
-    }
+    const path = notification.related_project_id
+      ? getProjectNotificationPath(role, notification.category, notification.related_project_id)
+      : null
+    if (path) navigate(path)
   }
 
   return (
