@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { Camera, FileWarning, MapPin, Send, X } from 'lucide-react'
+import { Check, FileWarning, Loader2, MapPin, Send, TriangleAlert, X } from 'lucide-react'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
 import { useAuth } from '../../hooks/useAuth'
@@ -11,6 +11,7 @@ import { LoadingState } from '@shared/components/ui/LoadingState'
 import EmptyState from '@shared/components/ui/EmptyState'
 import DssPanel from '../../components/ui/DssPanel'
 import LocationModal from '../../components/LocationModal'
+import SitePhotoGrid from '../../components/ui/SitePhotoGrid'
 import { formatDate } from '@shared/utils/format'
 import {
   PROJECT_STATUS_LABELS,
@@ -19,20 +20,13 @@ import {
   MONITORING_EDITABLE_STATUSES,
 } from '@shared/utils/projectStatus'
 import { evaluateProjectDss } from '@shared/utils/decisionSupport'
-import { processImageFile, formatImageMetadata } from '../../utils/imageProcessing'
+import { IMAGE_STAGE_LABELS, processImageFile } from '../../utils/imageProcessing'
+import { analyzeProjectImage } from '../../utils/imageAnalysis'
 import { isWithinDonsol } from '@shared/utils/geo'
 
 const inputClass =
   'w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500'
 const textareaClass = inputClass
-
-const IMAGE_STAGE_LABELS = {
-  BEFORE: 'Before',
-  DURING: 'During',
-  AFTER: 'After',
-  ISSUE: 'Issue',
-  OTHER: 'Other',
-}
 
 const EMPTY_FORM = {
   progress_percentage: '',
@@ -58,6 +52,11 @@ export default function ProjectMonitoringDetail() {
 
   const [form, setForm] = useState(EMPTY_FORM)
   const [photoQueue, setPhotoQueue] = useState([])
+  // Per-photo upload progress, keyed by photoQueue item id: 'uploading' |
+  // 'success' | 'error'. Populated only while handleSubmitUpdate is running
+  // and cleared once it finishes, so the queue shows plain "ready to submit"
+  // rows the rest of the time.
+  const [uploadStatus, setUploadStatus] = useState({})
   const [locating, setLocating] = useState(false)
   const [submitting, setSubmitting] = useState(false)
 
@@ -173,7 +172,12 @@ export default function ProjectMonitoringDetail() {
     if (files.length === 0) return
     setPhotoQueue((current) => [
       ...current,
-      ...files.map((file) => ({ id: crypto.randomUUID(), file, stage: 'DURING' })),
+      ...files.map((file) => ({
+        id: crypto.randomUUID(),
+        file,
+        stage: 'DURING',
+        previewUrl: URL.createObjectURL(file),
+      })),
     ])
   }
 
@@ -182,7 +186,11 @@ export default function ProjectMonitoringDetail() {
   }
 
   function removePhoto(id) {
-    setPhotoQueue((current) => current.filter((photo) => photo.id !== id))
+    setPhotoQueue((current) => {
+      const removed = current.find((photo) => photo.id === id)
+      if (removed) URL.revokeObjectURL(removed.previewUrl)
+      return current.filter((photo) => photo.id !== id)
+    })
   }
 
   function useMyLocation() {
@@ -241,36 +249,76 @@ export default function ProjectMonitoringDetail() {
       return
     }
 
-    const failedPhotos = []
-    for (const photo of photoQueue) {
-      try {
-        const metadata = await processImageFile(photo.file)
-        const path = `${project.id}/${newUpdate.id}/${crypto.randomUUID()}-${photo.file.name}`
+    // A photo upload/insert failure must never lose the monitoring update
+    // itself — it's already saved above. Each photo is tracked independently
+    // (own try/catch, own uploadStatus entry) and run concurrently rather
+    // than one-at-a-time — with several photos queued, sequential upload +
+    // insert + analyze per photo made total wait time scale with photo
+    // count; running them in parallel doesn't change what happens to any
+    // single photo, just lets them happen at the same time.
+    const photoResults = await Promise.all(
+      photoQueue.map(async (photo) => {
+        setUploadStatus((current) => ({ ...current, [photo.id]: 'uploading' }))
+        try {
+          // Fast client-side gate only (format/size/corruption, entirely in
+          // the browser — see src/utils/imageProcessing.js). A rejection
+          // here means the file never gets uploaded or sent to Gemini at
+          // all. This is not the authoritative check: analyze-project-image
+          // independently re-validates the actual downloaded bytes
+          // server-side, since a browser-reported MIME type can't be
+          // trusted.
+          const { status: gateStatus, result: gateResult } = await processImageFile(photo.file)
+          if (gateStatus === 'FAILED') {
+            throw new Error(gateResult?.error ?? 'Image could not be validated.')
+          }
 
-        const { error: uploadError } = await supabase.storage.from('project-images').upload(path, photo.file)
-        if (uploadError) throw uploadError
+          const path = `${project.id}/${newUpdate.id}/${crypto.randomUUID()}-${photo.file.name}`
 
-        const { error: insertError } = await supabase.from('project_images').insert({
-          project_id: project.id,
-          project_update_id: newUpdate.id,
-          uploaded_by: user.id,
-          storage_path: path,
-          file_name: photo.file.name,
-          image_stage: photo.stage,
-          captured_at: new Date().toISOString(),
-          latitude: form.latitude === '' ? null : Number(form.latitude),
-          longitude: form.longitude === '' ? null : Number(form.longitude),
-          ai_analysis_status: 'PROCESSED',
-          ai_analysis_result: metadata,
-        })
-        if (insertError) throw insertError
-      } catch (photoError) {
-        failedPhotos.push(`${photo.file.name}: ${photoError.message}`)
-      }
-    }
+          const { error: uploadError } = await supabase.storage.from('project-images').upload(path, photo.file)
+          if (uploadError) throw uploadError
 
+          const { data: insertedImage, error: insertError } = await supabase
+            .from('project_images')
+            .insert({
+              project_id: project.id,
+              project_update_id: newUpdate.id,
+              uploaded_by: user.id,
+              storage_path: path,
+              file_name: photo.file.name,
+              image_stage: photo.stage,
+              captured_at: new Date().toISOString(),
+              latitude: form.latitude === '' ? null : Number(form.latitude),
+              longitude: form.longitude === '' ? null : Number(form.longitude),
+              ai_analysis_status: 'PENDING',
+              ai_analysis_result: null,
+            })
+            .select('id')
+            .single()
+          if (insertError) throw insertError
+
+          // The photo itself is safely saved from here on — everything
+          // below is best-effort AI analysis. Its outcome (including any
+          // failure) is only ever recorded on the image row itself
+          // (ai_analysis_status/ai_analysis_result via the Edge Function);
+          // it can never turn this photo, or the monitoring update, into a
+          // failure.
+          setUploadStatus((current) => ({ ...current, [photo.id]: 'analyzing' }))
+          await analyzeProjectImage(insertedImage.id)
+
+          setUploadStatus((current) => ({ ...current, [photo.id]: 'success' }))
+          return null
+        } catch (photoError) {
+          setUploadStatus((current) => ({ ...current, [photo.id]: 'error' }))
+          return `${photo.file.name}: ${photoError.message}`
+        }
+      }),
+    )
+    const failedPhotos = photoResults.filter(Boolean)
+
+    for (const photo of photoQueue) URL.revokeObjectURL(photo.previewUrl)
     setForm(EMPTY_FORM)
     setPhotoQueue([])
+    setUploadStatus({})
     setSubmitting(false)
 
     if (failedPhotos.length > 0) {
@@ -477,39 +525,72 @@ export default function ProjectMonitoringDetail() {
               />
 
               {photoQueue.length > 0 ? (
-                <ul className="mt-3 space-y-2">
-                  {photoQueue.map((photo) => (
-                    <li
-                      key={photo.id}
-                      className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-200 bg-white px-3 py-2"
-                    >
-                      <span className="flex items-center gap-2 text-sm text-slate-700">
-                        <Camera className="h-4 w-4 text-slate-400" aria-hidden="true" />
-                        {photo.file.name}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <select
-                          value={photo.stage}
-                          onChange={(event) => updatePhotoStage(photo.id, event.target.value)}
-                          className="rounded-md border border-slate-300 px-2 py-1 text-xs"
-                        >
-                          {Object.entries(IMAGE_STAGE_LABELS).map(([value, label]) => (
-                            <option key={value} value={value}>
-                              {label}
-                            </option>
-                          ))}
-                        </select>
-                        <button
-                          type="button"
-                          onClick={() => removePhoto(photo.id)}
-                          className="text-slate-400 hover:text-red-600"
-                          aria-label={`Remove ${photo.file.name}`}
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
-                      </div>
-                    </li>
-                  ))}
+                <ul className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+                  {photoQueue.map((photo) => {
+                    const status = uploadStatus[photo.id]
+                    return (
+                      <li
+                        key={photo.id}
+                        className="overflow-hidden rounded-md border border-slate-200 bg-white"
+                      >
+                        <div className="relative">
+                          <img
+                            src={photo.previewUrl}
+                            alt={photo.file.name}
+                            className="h-28 w-full object-cover"
+                          />
+                          {status === 'uploading' || status === 'analyzing' ? (
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+                              <Loader2 className="h-6 w-6 animate-spin text-white" aria-hidden="true" />
+                            </div>
+                          ) : status === 'success' ? (
+                            <span className="absolute right-1.5 top-1.5 rounded-full bg-emerald-600 p-1 text-white">
+                              <Check className="h-3 w-3" aria-hidden="true" />
+                            </span>
+                          ) : status === 'error' ? (
+                            <span className="absolute right-1.5 top-1.5 rounded-full bg-red-600 p-1 text-white">
+                              <TriangleAlert className="h-3 w-3" aria-hidden="true" />
+                            </span>
+                          ) : !submitting ? (
+                            <button
+                              type="button"
+                              onClick={() => removePhoto(photo.id)}
+                              className="absolute right-1.5 top-1.5 rounded-full bg-black/60 p-1 text-white hover:bg-black/80"
+                              aria-label={`Remove ${photo.file.name}`}
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          ) : null}
+                        </div>
+                        <div className="space-y-1 p-2">
+                          <p className="truncate text-[11px] text-slate-500" title={photo.file.name}>
+                            {photo.file.name}
+                          </p>
+                          <select
+                            value={photo.stage}
+                            disabled={submitting}
+                            onChange={(event) => updatePhotoStage(photo.id, event.target.value)}
+                            className="w-full rounded-md border border-slate-300 px-1.5 py-1 text-xs disabled:bg-slate-100"
+                          >
+                            {Object.entries(IMAGE_STAGE_LABELS).map(([value, label]) => (
+                              <option key={value} value={value}>
+                                {label}
+                              </option>
+                            ))}
+                          </select>
+                          {status === 'error' ? (
+                            <p className="text-[11px] text-red-600">Upload failed</p>
+                          ) : status === 'uploading' ? (
+                            <p className="text-[11px] text-slate-500">Uploading...</p>
+                          ) : status === 'analyzing' ? (
+                            <p className="text-[11px] text-slate-500">Processing image...</p>
+                          ) : status === 'success' ? (
+                            <p className="text-[11px] text-emerald-600">Uploaded</p>
+                          ) : null}
+                        </div>
+                      </li>
+                    )
+                  })}
                 </ul>
               ) : null}
             </div>
@@ -556,34 +637,8 @@ export default function ProjectMonitoringDetail() {
                   ) : null}
 
                   {(imagesByUpdate.get(entry.id) ?? []).length > 0 ? (
-                    <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-                      {imagesByUpdate.get(entry.id).map((image) => (
-                        <a
-                          key={image.id}
-                          href={image.signedUrl ?? undefined}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="group block overflow-hidden rounded-md border border-slate-200 bg-white"
-                        >
-                          {image.signedUrl ? (
-                            <img
-                              src={image.signedUrl}
-                              alt={image.file_name ?? 'Site photo'}
-                              className="h-28 w-full object-cover"
-                            />
-                          ) : (
-                            <div className="flex h-28 w-full items-center justify-center bg-slate-100">
-                              <Camera className="h-6 w-6 text-slate-300" aria-hidden="true" />
-                            </div>
-                          )}
-                          <div className="p-2">
-                            <Badge tone="neutral">{IMAGE_STAGE_LABELS[image.image_stage] ?? image.image_stage}</Badge>
-                            <p className="mt-1 text-[11px] text-slate-500">
-                              {formatImageMetadata(image.ai_analysis_result) ?? 'Processing pending'}
-                            </p>
-                          </div>
-                        </a>
-                      ))}
+                    <div className="mt-3">
+                      <SitePhotoGrid images={imagesByUpdate.get(entry.id)} />
                     </div>
                   ) : null}
                 </li>
@@ -595,26 +650,8 @@ export default function ProjectMonitoringDetail() {
         {(imagesByUpdate.get('unassigned') ?? []).length > 0 ? (
           <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
             <h2 className="text-sm font-semibold text-slate-800">Other Site Photos</h2>
-            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-              {imagesByUpdate.get('unassigned').map((image) => (
-                <a
-                  key={image.id}
-                  href={image.signedUrl ?? undefined}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="block overflow-hidden rounded-md border border-slate-200 bg-white"
-                >
-                  {image.signedUrl ? (
-                    <img src={image.signedUrl} alt={image.file_name ?? 'Site photo'} className="h-28 w-full object-cover" />
-                  ) : null}
-                  <div className="p-2">
-                    <Badge tone="neutral">{IMAGE_STAGE_LABELS[image.image_stage] ?? image.image_stage}</Badge>
-                    <p className="mt-1 text-[11px] text-slate-500">
-                      {formatImageMetadata(image.ai_analysis_result) ?? 'Processing pending'}
-                    </p>
-                  </div>
-                </a>
-              ))}
+            <div className="mt-4">
+              <SitePhotoGrid images={imagesByUpdate.get('unassigned')} />
             </div>
           </section>
         ) : null}

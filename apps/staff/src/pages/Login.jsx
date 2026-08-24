@@ -214,7 +214,7 @@ export default function Login() {
                     required
                     value={email}
                     onChange={(event) => setEmail(event.target.value)}
-                    placeholder="juandelacruz@gmail.com"
+                    placeholder="Enter your email"
                     className="w-full rounded-lg border border-slate-300 bg-white/80 py-2.5 pl-10 pr-3 text-sm shadow-sm transition-colors focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/30"
                   />
                 </div>
@@ -245,7 +245,7 @@ export default function Login() {
                     required
                     value={password}
                     onChange={(event) => setPassword(event.target.value)}
-                    placeholder="••••••••"
+                    placeholder="Enter your password"
                     className="w-full rounded-lg border border-slate-300 bg-white/80 py-2.5 pl-10 pr-10 text-sm shadow-sm transition-colors focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/30"
                   />
                   <button
@@ -302,7 +302,7 @@ export default function Login() {
                         required
                         value={resetEmail}
                         onChange={(event) => setResetEmail(event.target.value)}
-                        placeholder="juandelacruz@gmail.com"
+                        placeholder="Enter your email"
                         className="w-full rounded-lg border border-slate-300 bg-white/80 py-2.5 pl-10 pr-3 text-sm shadow-sm transition-colors focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/30"
                       />
                     </div>

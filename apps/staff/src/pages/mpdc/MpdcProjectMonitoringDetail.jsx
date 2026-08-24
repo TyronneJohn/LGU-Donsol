@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { Camera, FileWarning, MapPin } from 'lucide-react'
+import { FileWarning, MapPin } from 'lucide-react'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
 import PageHeader from '../../components/ui/PageHeader'
@@ -10,6 +10,7 @@ import { LoadingState } from '@shared/components/ui/LoadingState'
 import EmptyState from '@shared/components/ui/EmptyState'
 import DssPanel from '../../components/ui/DssPanel'
 import LocationModal from '../../components/LocationModal'
+import SitePhotoGrid from '../../components/ui/SitePhotoGrid'
 import { formatCurrency, formatDate } from '@shared/utils/format'
 import {
   PROJECT_STATUS_LABELS,
@@ -19,16 +20,7 @@ import {
   PROCUREMENT_STATUS_TONES,
 } from '@shared/utils/projectStatus'
 import { evaluateProjectDss } from '@shared/utils/decisionSupport'
-import { formatImageMetadata } from '../../utils/imageProcessing'
 import { isWithinDonsol } from '@shared/utils/geo'
-
-const IMAGE_STAGE_LABELS = {
-  BEFORE: 'Before',
-  DURING: 'During',
-  AFTER: 'After',
-  ISSUE: 'Issue',
-  OTHER: 'Other',
-}
 
 function Field({ label, children }) {
   return (
@@ -97,7 +89,7 @@ export default function MpdcProjectMonitoringDetail() {
     const { data, error } = await supabase
       .from('project_images')
       .select(
-        `id, project_update_id, storage_path, file_name, image_stage, ai_analysis_result, created_at,
+        `id, project_update_id, storage_path, file_name, image_stage, ai_analysis_status, ai_analysis_result, created_at,
          uploader:profiles!project_images_uploaded_by_fkey(full_name)`,
       )
       .eq('project_id', projectId)
@@ -305,34 +297,8 @@ export default function MpdcProjectMonitoringDetail() {
                   ) : null}
 
                   {(imagesByUpdate.get(entry.id) ?? []).length > 0 ? (
-                    <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-                      {imagesByUpdate.get(entry.id).map((image) => (
-                        <a
-                          key={image.id}
-                          href={image.signedUrl ?? undefined}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="block overflow-hidden rounded-md border border-slate-200 bg-white"
-                        >
-                          {image.signedUrl ? (
-                            <img
-                              src={image.signedUrl}
-                              alt={image.file_name ?? 'Site photo'}
-                              className="h-28 w-full object-cover"
-                            />
-                          ) : (
-                            <div className="flex h-28 w-full items-center justify-center bg-slate-100">
-                              <Camera className="h-6 w-6 text-slate-300" aria-hidden="true" />
-                            </div>
-                          )}
-                          <div className="p-2">
-                            <Badge tone="neutral">{IMAGE_STAGE_LABELS[image.image_stage] ?? image.image_stage}</Badge>
-                            <p className="mt-1 text-[11px] text-slate-500">
-                              {formatImageMetadata(image.ai_analysis_result) ?? 'Processing pending'}
-                            </p>
-                          </div>
-                        </a>
-                      ))}
+                    <div className="mt-3">
+                      <SitePhotoGrid images={imagesByUpdate.get(entry.id)} />
                     </div>
                   ) : null}
                 </li>
@@ -344,26 +310,8 @@ export default function MpdcProjectMonitoringDetail() {
         {(imagesByUpdate.get('unassigned') ?? []).length > 0 ? (
           <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
             <h2 className="text-sm font-semibold text-slate-800">Other Site Photos</h2>
-            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-              {imagesByUpdate.get('unassigned').map((image) => (
-                <a
-                  key={image.id}
-                  href={image.signedUrl ?? undefined}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="block overflow-hidden rounded-md border border-slate-200 bg-white"
-                >
-                  {image.signedUrl ? (
-                    <img src={image.signedUrl} alt={image.file_name ?? 'Site photo'} className="h-28 w-full object-cover" />
-                  ) : null}
-                  <div className="p-2">
-                    <Badge tone="neutral">{IMAGE_STAGE_LABELS[image.image_stage] ?? image.image_stage}</Badge>
-                    <p className="mt-1 text-[11px] text-slate-500">
-                      {formatImageMetadata(image.ai_analysis_result) ?? 'Processing pending'}
-                    </p>
-                  </div>
-                </a>
-              ))}
+            <div className="mt-4">
+              <SitePhotoGrid images={imagesByUpdate.get('unassigned')} />
             </div>
           </section>
         ) : null}
