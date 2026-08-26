@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams, useNavigate } from 'react-router-dom'
-import { AlertTriangle, Camera, Clock, FileWarning, MapPin, MessageSquare, Sparkles, X } from 'lucide-react'
+import { Clock, FileWarning, MapPin, MessageSquare, X } from 'lucide-react'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
 import { useAuth } from '../../hooks/useAuth'
@@ -12,6 +12,7 @@ import { LoadingState } from '@shared/components/ui/LoadingState'
 import EmptyState from '@shared/components/ui/EmptyState'
 import DssPanel from '../../components/ui/DssPanel'
 import LocationModal from '../../components/LocationModal'
+import SitePhotoGrid from '../../components/ui/SitePhotoGrid'
 import { formatCurrency, formatDate } from '@shared/utils/format'
 import {
   PROJECT_STATUS_LABELS,
@@ -22,40 +23,8 @@ import {
   PROCUREMENT_STATUS_TONES,
 } from '@shared/utils/projectStatus'
 import { evaluateProjectDss } from '@shared/utils/decisionSupport'
-import { formatImageMetadata } from '../../utils/imageProcessing'
 import { isWithinDonsol } from '@shared/utils/geo'
 import { ROLES, ROLE_LABELS } from '../../utils/roles'
-
-const IMAGE_STAGE_LABELS = {
-  BEFORE: 'Before',
-  DURING: 'During',
-  AFTER: 'After',
-  ISSUE: 'Issue',
-  OTHER: 'Other',
-}
-
-// Advisory-only AI read of a photo (see supabase/functions/analyze-site-photo)
-// — deliberately never a percentage, only a qualitative stage note and an
-// optional anomaly flag. Renders nothing until ai_reviewed_at is set.
-function AiObservationNote({ image }) {
-  if (!image.ai_reviewed_at) return null
-  return (
-    <div className="mt-1 space-y-0.5 border-t border-slate-100 pt-1">
-      {image.ai_stage_observation ? (
-        <p className="flex items-start gap-1 text-[11px] text-slate-500">
-          <Sparkles className="mt-0.5 h-3 w-3 shrink-0 text-blue-400" aria-hidden="true" />
-          <span>{image.ai_stage_observation}</span>
-        </p>
-      ) : null}
-      {image.ai_anomaly_detected ? (
-        <p className="flex items-start gap-1 text-[11px] text-amber-700">
-          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
-          <span>{image.ai_anomaly_notes || 'AI flagged this photo for review.'}</span>
-        </p>
-      ) : null}
-    </div>
-  )
-}
 
 function Field({ label, children }) {
   return (
@@ -141,35 +110,8 @@ function MonitoringHistoryModal({ open, onClose, updates, imagesByUpdate }) {
                   ) : null}
 
                   {(imagesByUpdate.get(entry.id) ?? []).length > 0 ? (
-                    <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-                      {imagesByUpdate.get(entry.id).map((image) => (
-                        <a
-                          key={image.id}
-                          href={image.signedUrl ?? undefined}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="block overflow-hidden rounded-md border border-slate-200 bg-white"
-                        >
-                          {image.signedUrl ? (
-                            <img
-                              src={image.signedUrl}
-                              alt={image.file_name ?? 'Site photo'}
-                              className="h-28 w-full object-cover"
-                            />
-                          ) : (
-                            <div className="flex h-28 w-full items-center justify-center bg-slate-100">
-                              <Camera className="h-6 w-6 text-slate-300" aria-hidden="true" />
-                            </div>
-                          )}
-                          <div className="p-2">
-                            <Badge tone="neutral">{IMAGE_STAGE_LABELS[image.image_stage] ?? image.image_stage}</Badge>
-                            <p className="mt-1 text-[11px] text-slate-500">
-                              {formatImageMetadata(image.ai_analysis_result) ?? 'Processing pending'}
-                            </p>
-                            <AiObservationNote image={image} />
-                          </div>
-                        </a>
-                      ))}
+                    <div className="mt-3">
+                      <SitePhotoGrid images={imagesByUpdate.get(entry.id)} />
                     </div>
                   ) : null}
                 </li>
@@ -180,27 +122,8 @@ function MonitoringHistoryModal({ open, onClose, updates, imagesByUpdate }) {
           {unassignedImages.length > 0 ? (
             <div className="mt-6 border-t border-slate-100 pt-4">
               <h3 className="text-sm font-semibold text-slate-800">Other Site Photos</h3>
-              <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-                {unassignedImages.map((image) => (
-                  <a
-                    key={image.id}
-                    href={image.signedUrl ?? undefined}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="block overflow-hidden rounded-md border border-slate-200 bg-white"
-                  >
-                    {image.signedUrl ? (
-                      <img src={image.signedUrl} alt={image.file_name ?? 'Site photo'} className="h-28 w-full object-cover" />
-                    ) : null}
-                    <div className="p-2">
-                      <Badge tone="neutral">{IMAGE_STAGE_LABELS[image.image_stage] ?? image.image_stage}</Badge>
-                      <p className="mt-1 text-[11px] text-slate-500">
-                        {formatImageMetadata(image.ai_analysis_result) ?? 'Processing pending'}
-                      </p>
-                      <AiObservationNote image={image} />
-                    </div>
-                  </a>
-                ))}
+              <div className="mt-3">
+                <SitePhotoGrid images={unassignedImages} />
               </div>
             </div>
           ) : null}
@@ -273,8 +196,7 @@ export default function MpdcProjectMonitoringDetail() {
     const { data, error } = await supabase
       .from('project_images')
       .select(
-        `id, project_update_id, storage_path, file_name, image_stage, ai_analysis_result,
-         ai_stage_observation, ai_anomaly_detected, ai_anomaly_notes, ai_reviewed_at, created_at,
+        `id, project_update_id, storage_path, file_name, image_stage, ai_analysis_status, ai_analysis_result, created_at,
          uploader:profiles!project_images_uploaded_by_fkey(full_name)`,
       )
       .eq('project_id', projectId)

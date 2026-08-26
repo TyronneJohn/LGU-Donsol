@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams } from 'react-router-dom'
-import { AlertTriangle, Camera, CameraOff, Clock, FileWarning, MapPin, Send, Sparkles, X } from 'lucide-react'
+import { Camera, CameraOff, Clock, FileWarning, MapPin, Send, X } from 'lucide-react'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
 import { useAuth } from '../../hooks/useAuth'
@@ -12,6 +12,7 @@ import { LoadingState } from '@shared/components/ui/LoadingState'
 import EmptyState from '@shared/components/ui/EmptyState'
 import DssPanel from '../../components/ui/DssPanel'
 import LocationModal from '../../components/LocationModal'
+import SitePhotoGrid from '../../components/ui/SitePhotoGrid'
 import { formatDate } from '@shared/utils/format'
 import {
   PROJECT_STATUS_LABELS,
@@ -20,20 +21,13 @@ import {
   MONITORING_EDITABLE_STATUSES,
 } from '@shared/utils/projectStatus'
 import { evaluateProjectDss } from '@shared/utils/decisionSupport'
-import { processImageFile, formatImageMetadata } from '../../utils/imageProcessing'
+import { IMAGE_STAGE_LABELS, processImageFile } from '../../utils/imageProcessing'
+import { analyzeProjectImage } from '../../utils/imageAnalysis'
 import { isWithinDonsol } from '@shared/utils/geo'
 
 const inputClass =
   'w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500'
 const textareaClass = inputClass
-
-const IMAGE_STAGE_LABELS = {
-  BEFORE: 'Before',
-  DURING: 'During',
-  AFTER: 'After',
-  ISSUE: 'Issue',
-  OTHER: 'Other',
-}
 
 const EMPTY_FORM = {
   progress_percentage: '',
@@ -152,31 +146,6 @@ function CameraCapture({ onCapture, onClose }) {
   )
 }
 
-// Advisory-only AI read of a photo — see analyze-site-photo. Deliberately
-// never shows a percentage; only a qualitative stage note and an optional
-// anomaly flag. Renders nothing while ai_reviewed_at is still null (either
-// not yet analyzed, or the AI call failed silently) rather than showing a
-// "pending" state forever if ANTHROPIC_API_KEY was never configured.
-function AiObservationNote({ image }) {
-  if (!image.ai_reviewed_at) return null
-  return (
-    <div className="mt-1 space-y-0.5 border-t border-slate-100 pt-1">
-      {image.ai_stage_observation ? (
-        <p className="flex items-start gap-1 text-[11px] text-slate-500">
-          <Sparkles className="mt-0.5 h-3 w-3 shrink-0 text-blue-400" aria-hidden="true" />
-          <span>{image.ai_stage_observation}</span>
-        </p>
-      ) : null}
-      {image.ai_anomaly_detected ? (
-        <p className="flex items-start gap-1 text-[11px] text-amber-700">
-          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
-          <span>{image.ai_anomaly_notes || 'AI flagged this photo for review.'}</span>
-        </p>
-      ) : null}
-    </div>
-  )
-}
-
 // Monitoring History used to render inline on the page, pushing everything
 // below the update form down further with every new entry. Moved into an
 // on-demand modal (same createPortal/backdrop pattern as LocationModal) so
@@ -250,35 +219,8 @@ function MonitoringHistoryModal({ open, onClose, updates, imagesByUpdate }) {
                   ) : null}
 
                   {(imagesByUpdate.get(entry.id) ?? []).length > 0 ? (
-                    <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-                      {imagesByUpdate.get(entry.id).map((image) => (
-                        <a
-                          key={image.id}
-                          href={image.signedUrl ?? undefined}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="group block overflow-hidden rounded-md border border-slate-200 bg-white"
-                        >
-                          {image.signedUrl ? (
-                            <img
-                              src={image.signedUrl}
-                              alt={image.file_name ?? 'Site photo'}
-                              className="h-28 w-full object-cover"
-                            />
-                          ) : (
-                            <div className="flex h-28 w-full items-center justify-center bg-slate-100">
-                              <Camera className="h-6 w-6 text-slate-300" aria-hidden="true" />
-                            </div>
-                          )}
-                          <div className="p-2">
-                            <Badge tone="neutral">{IMAGE_STAGE_LABELS[image.image_stage] ?? image.image_stage}</Badge>
-                            <p className="mt-1 text-[11px] text-slate-500">
-                              {formatImageMetadata(image.ai_analysis_result) ?? 'Processing pending'}
-                            </p>
-                            <AiObservationNote image={image} />
-                          </div>
-                        </a>
-                      ))}
+                    <div className="mt-3">
+                      <SitePhotoGrid images={imagesByUpdate.get(entry.id)} />
                     </div>
                   ) : null}
                 </li>
@@ -289,27 +231,8 @@ function MonitoringHistoryModal({ open, onClose, updates, imagesByUpdate }) {
           {unassignedImages.length > 0 ? (
             <div className="mt-6 border-t border-slate-100 pt-4">
               <h3 className="text-sm font-semibold text-slate-800">Other Site Photos</h3>
-              <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-                {unassignedImages.map((image) => (
-                  <a
-                    key={image.id}
-                    href={image.signedUrl ?? undefined}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="block overflow-hidden rounded-md border border-slate-200 bg-white"
-                  >
-                    {image.signedUrl ? (
-                      <img src={image.signedUrl} alt={image.file_name ?? 'Site photo'} className="h-28 w-full object-cover" />
-                    ) : null}
-                    <div className="p-2">
-                      <Badge tone="neutral">{IMAGE_STAGE_LABELS[image.image_stage] ?? image.image_stage}</Badge>
-                      <p className="mt-1 text-[11px] text-slate-500">
-                        {formatImageMetadata(image.ai_analysis_result) ?? 'Processing pending'}
-                      </p>
-                      <AiObservationNote image={image} />
-                    </div>
-                  </a>
-                ))}
+              <div className="mt-3">
+                <SitePhotoGrid images={unassignedImages} />
               </div>
             </div>
           ) : null}
@@ -361,8 +284,7 @@ export default function ProjectMonitoringDetail() {
     const { data, error } = await supabase
       .from('project_images')
       .select(
-        `id, project_update_id, storage_path, file_name, image_stage, ai_analysis_status, ai_analysis_result,
-         ai_stage_observation, ai_anomaly_detected, ai_anomaly_notes, ai_reviewed_at, created_at,
+        `id, project_update_id, storage_path, file_name, image_stage, ai_analysis_status, ai_analysis_result, created_at,
          uploader:profiles!project_images_uploaded_by_fkey(full_name)`,
       )
       .eq('project_id', projectId)
@@ -500,7 +422,17 @@ export default function ProjectMonitoringDetail() {
     const failedPhotos = []
     for (const photo of photoQueue) {
       try {
-        const metadata = await processImageFile(photo.file)
+        // Fast client-side gate only (format/size/corruption, entirely in
+        // the browser — see src/utils/imageProcessing.js). A rejection here
+        // means the file never gets uploaded or sent to Gemini at all. This
+        // is not the authoritative check: analyze-project-image
+        // independently re-validates the actual downloaded bytes
+        // server-side, since a browser-reported MIME type can't be trusted.
+        const { status: gateStatus, result: gateResult } = await processImageFile(photo.file)
+        if (gateStatus === 'FAILED') {
+          throw new Error(gateResult?.error ?? 'Image could not be validated.')
+        }
+
         const path = `${project.id}/${newUpdate.id}/${crypto.randomUUID()}-${photo.file.name}`
 
         const { error: uploadError } = await supabase.storage.from('project-images').upload(path, photo.file)
@@ -516,17 +448,17 @@ export default function ProjectMonitoringDetail() {
             file_name: photo.file.name,
             image_stage: photo.stage,
             captured_at: new Date().toISOString(),
-            ai_analysis_status: 'PROCESSED',
-            ai_analysis_result: metadata,
+            ai_analysis_status: 'PENDING',
+            ai_analysis_result: null,
           })
           .select('id')
           .single()
         if (insertError) throw insertError
 
         // Fire-and-forget: the AI read is advisory-only (see
-        // analyze-site-photo) and must never block or fail the monitoring
-        // update itself — the photo is already saved either way.
-        supabase.functions.invoke('analyze-site-photo', { body: { image_id: insertedImage.id } }).catch(() => {})
+        // analyze-project-image) and must never block or fail the
+        // monitoring update itself — the photo is already saved either way.
+        analyzeProjectImage(insertedImage.id).catch(() => {})
       } catch (photoError) {
         failedPhotos.push(`${photo.file.name}: ${photoError.message}`)
       }

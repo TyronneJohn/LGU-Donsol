@@ -11,6 +11,7 @@ import { LoadingState } from '@shared/components/ui/LoadingState'
 import EmptyState from '@shared/components/ui/EmptyState'
 import DssPanel from '../../components/ui/DssPanel'
 import LocationModal from '../../components/LocationModal'
+import SitePhotoGrid from '../../components/ui/SitePhotoGrid'
 import { formatCurrency, formatDate, formatDateTime } from '@shared/utils/format'
 import { PROJECT_STATUS_LABELS, PROJECT_STATUS_TONES } from '@shared/utils/projectStatus'
 import { evaluateProjectDss } from '@shared/utils/decisionSupport'
@@ -51,6 +52,7 @@ export default function AdminProjectDetail() {
   const [documents, setDocuments] = useState([])
   const [procurement, setProcurement] = useState([])
   const [updates, setUpdates] = useState([])
+  const [images, setImages] = useState([])
   const [statusHistory, setStatusHistory] = useState([])
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
@@ -67,6 +69,7 @@ export default function AdminProjectDetail() {
       documentsResult,
       procurementResult,
       updatesResult,
+      imagesResult,
       historyResult,
     ] = await Promise.all([
       supabase
@@ -124,6 +127,14 @@ export default function AdminProjectDetail() {
         .eq('project_id', projectId)
         .order('report_date', { ascending: false }),
       supabase
+        .from('project_images')
+        .select(
+          `id, project_update_id, storage_path, file_name, image_stage, ai_analysis_status, ai_analysis_result, created_at,
+           uploader:profiles!project_images_uploaded_by_fkey(full_name)`,
+        )
+        .eq('project_id', projectId)
+        .order('created_at', { ascending: false }),
+      supabase
         .from('project_status_history')
         .select(
           `id, old_status, new_status, reason, changed_at,
@@ -147,6 +158,17 @@ export default function AdminProjectDetail() {
     setUpdates(updatesResult.data ?? [])
     setStatusHistory(historyResult.data ?? [])
     setLoading(false)
+
+    const imageRows = imagesResult.data ?? []
+    const imagesWithUrls = await Promise.all(
+      imageRows.map(async (image) => {
+        const { data: signed } = await supabase.storage
+          .from('project-images')
+          .createSignedUrl(image.storage_path, 3600)
+        return { ...image, signedUrl: signed?.signedUrl ?? null }
+      }),
+    )
+    setImages(imagesWithUrls)
   }
 
   useEffect(() => {
@@ -357,6 +379,21 @@ export default function AdminProjectDetail() {
                 </li>
               ))}
             </ul>
+          )}
+        </section>
+
+        <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
+          <h2 className="text-sm font-semibold text-slate-800">Site Photos / Evidence</h2>
+          <p className="mt-0.5 text-xs text-slate-400">
+            Oversight view — every photo Engineering has submitted for this project, with its automated
+            image-processing status.
+          </p>
+          {images.length === 0 ? (
+            <p className="mt-3 text-sm text-slate-500">No site photos uploaded yet.</p>
+          ) : (
+            <div className="mt-4">
+              <SitePhotoGrid images={images} />
+            </div>
           )}
         </section>
 
