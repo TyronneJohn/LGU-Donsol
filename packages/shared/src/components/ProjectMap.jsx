@@ -136,7 +136,9 @@ class MapErrorBoundary extends Component {
  * MAX_BOUNDS above) so this never turns into a general Philippines/world
  * map, regardless of how many projects are passed in.
  *
- * @param {object[]} projects - rows already filtered to valid coordinates
+ * @param {object[]} projects - rows already filtered to valid coordinates.
+ *   Optional decorator fields the popup renders when present: `procurement_status`,
+ *   `progress_percentage`, `flags`.
  * @param {string} [height]
  */
 export default function ProjectMap({ projects, height = '520px' }) {
@@ -170,7 +172,19 @@ export default function ProjectMap({ projects, height = '520px' }) {
 
   return (
     <MapErrorBoundary>
-      <div style={{ height }} className="overflow-hidden rounded-lg border border-slate-200">
+      {/* relative isolate z-0: `isolate` contains Leaflet's own internal
+          z-indexes (up to 1000 for its controls) so they never escape this
+          box; `relative z-0` makes the box itself an explicit, ordinary
+          z-index:0 layer rather than an un-positioned one. The actual
+          overlay-safety guarantee comes from the other side of this: every
+          modal that can appear alongside an inline map on the same page
+          (ConfirmDialog, ProjectForm's SubmitForReviewModal) uses z-1100,
+          comfortably above Leaflet's max, so it always wins regardless of
+          any stacking-context leak here. */}
+      <div
+        style={{ height }}
+        className="relative isolate z-0 overflow-hidden rounded-lg border border-slate-200"
+      >
         <MapContainer
           key={mapKey}
           center={initialCenter}

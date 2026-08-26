@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { FileWarning, RotateCcw, Save, Upload, XCircle } from 'lucide-react'
+import { FileWarning, MapPin, RotateCcw, Save, Upload, XCircle } from 'lucide-react'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
 import { useConfirm } from '../../hooks/useConfirm'
@@ -11,9 +11,11 @@ import CurrencyInput from '../../components/ui/CurrencyInput'
 import Badge from '@shared/components/ui/Badge'
 import { LoadingState } from '@shared/components/ui/LoadingState'
 import EmptyState from '@shared/components/ui/EmptyState'
+import LocationModal from '../../components/LocationModal'
 import { formatCurrency, formatDate, formatDateTime } from '@shared/utils/format'
 import { PROJECT_STATUS_LABELS, PROJECT_STATUS_TONES } from '@shared/utils/projectStatus'
 import { getDocumentViewUrl } from '@shared/utils/documentViewer'
+import { isWithinDonsol } from '@shared/utils/geo'
 
 const inputClass =
   'w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500'
@@ -78,6 +80,7 @@ export default function ProjectReviewDetail() {
   const [documents, setDocuments] = useState([])
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
+  const [locationOpen, setLocationOpen] = useState(false)
 
   const [actionType, setActionType] = useState(null)
   const [remarks, setRemarks] = useState('')
@@ -87,7 +90,7 @@ export default function ProjectReviewDetail() {
   const [savingFields, setSavingFields] = useState(false)
   const [editingBudgetFields, setEditingBudgetFields] = useState(false)
 
-  const [docForm, setDocForm] = useState({ category: 'OTHER', title: '', files: [] })
+  const [docForm, setDocForm] = useState({ title: '', files: [] })
   const [docInputKey, setDocInputKey] = useState(0)
   const [uploading, setUploading] = useState(false)
 
@@ -159,7 +162,7 @@ export default function ProjectReviewDetail() {
         .from('projects')
         .select(
           `id, project_code, title, description, project_category, barangay, location_text,
-           estimated_cost, approved_budget, funding_source,
+           latitude, longitude, estimated_cost, approved_budget, funding_source,
            start_date_planned, end_date_planned, status, created_by, office_id,
            offices(name),
            creator:profiles!projects_created_by_fkey(full_name, position_title, phone)`,
@@ -332,14 +335,16 @@ export default function ProjectReviewDetail() {
       toast.error('Choose a file', 'Select at least one file to upload.')
       return
     }
+    // The Title field only applies when uploading a single file — with
+    // several selected at once, each document takes its own file name
+    // instead, so there's nothing to require in that case.
+    const useTitle = docForm.files.length === 1
+    if (useTitle && !docForm.title.trim()) {
+      toast.error('Title required', 'Enter a title for this document.')
+      return
+    }
 
     setUploading(true)
-
-    // The Title field only makes sense when uploading a single file — with
-    // several selected at once, each document takes its own file name
-    // instead (same fallback the single-file case already used when Title
-    // was left blank).
-    const useTitle = docForm.files.length === 1
 
     const results = await Promise.all(
       docForm.files.map(async (file) => {
@@ -352,7 +357,6 @@ export default function ProjectReviewDetail() {
         const { error: insertError } = await supabase.from('project_documents').insert({
           project_id: project.id,
           uploaded_by: user.id,
-          document_category: docForm.category,
           title: (useTitle ? docForm.title.trim() : '') || file.name,
           storage_path: path,
           file_name: file.name,
@@ -376,7 +380,7 @@ export default function ProjectReviewDetail() {
       toast.success(succeededCount === 1 ? 'Document uploaded' : `${succeededCount} documents uploaded`)
     }
 
-    setDocForm({ category: 'OTHER', title: '', files: [] })
+    setDocForm({ title: '', files: [] })
     setDocInputKey((current) => current + 1)
     loadDocuments(project.id)
   }
@@ -445,6 +449,15 @@ export default function ProjectReviewDetail() {
             <Field label="Category">{project.project_category}</Field>
             <Field label="Barangay">{project.barangay}</Field>
             <Field label="Location">{project.location_text}</Field>
+            <Field label="Coordinates">
+              {isWithinDonsol(project.latitude, project.longitude) ? (
+                <Button variant="secondary" size="sm" icon={MapPin} onClick={() => setLocationOpen(true)}>
+                  See Location
+                </Button>
+              ) : (
+                <span className="text-slate-400">No location on file for Donsol, Sorsogon.</span>
+              )}
+            </Field>
             <Field label="Estimated Cost">{formatCurrency(project.estimated_cost)}</Field>
             <Field label="Planned Start">{formatDate(project.start_date_planned)}</Field>
             <Field label="Planned End">{formatDate(project.end_date_planned)}</Field>
@@ -529,8 +542,14 @@ export default function ProjectReviewDetail() {
 
           {canReview && (project.approved_budget == null || editingBudgetFields) ? (
             <div className="mt-4 flex gap-2">
-              <Button type="submit" size="sm" icon={Save} loading={savingFields}>
-                Save Changes
+              <Button
+                type="submit"
+                size="sm"
+                icon={Save}
+                loading={savingFields}
+                disabled={!fieldsForm.approved_budget || Number(fieldsForm.approved_budget) <= 0}
+              >
+                Send to MPDC
               </Button>
               {editingBudgetFields ? (
                 <Button type="button" variant="secondary" size="sm" onClick={handleCancelEditFields}>
@@ -568,36 +587,19 @@ export default function ProjectReviewDetail() {
           {canReview ? (
             <form
               onSubmit={handleUploadDocument}
-              className="mt-4 grid gap-3 rounded-md border border-slate-200 bg-slate-50 p-4 sm:grid-cols-3"
+              className="mt-4 grid gap-3 rounded-md border border-slate-200 bg-slate-50 p-4 sm:grid-cols-2"
             >
-              <div>
-                <label htmlFor="doc_category" className="mb-1 block text-sm font-medium text-slate-700">
-                  Category
-                </label>
-                <select
-                  id="doc_category"
-                  value={docForm.category}
-                  onChange={(event) => setDocForm((current) => ({ ...current, category: event.target.value }))}
-                  className={inputClass}
-                >
-                  {Object.entries(DOC_CATEGORY_LABELS).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
               {docForm.files.length <= 1 ? (
                 <div>
                   <label htmlFor="doc_title" className="mb-1 block text-sm font-medium text-slate-700">
-                    Title (optional)
+                    Title
                   </label>
                   <input
                     id="doc_title"
                     value={docForm.title}
                     onChange={(event) => setDocForm((current) => ({ ...current, title: event.target.value }))}
                     className={inputClass}
+                    required
                   />
                 </div>
               ) : (
@@ -624,7 +626,7 @@ export default function ProjectReviewDetail() {
                 />
               </div>
 
-              <div className="sm:col-span-3">
+              <div className="sm:col-span-2">
                 <Button type="submit" variant="secondary" size="sm" icon={Upload} loading={uploading}>
                   Upload
                 </Button>
@@ -711,6 +713,8 @@ export default function ProjectReviewDetail() {
           )}
         </section>
       </div>
+
+      <LocationModal open={locationOpen} project={project} onClose={() => setLocationOpen(false)} />
     </div>
   )
 }

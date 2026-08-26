@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
-import { useParams } from 'react-router-dom'
-import { Camera, FileWarning, MapPin } from 'lucide-react'
+import { createPortal } from 'react-dom'
+import { useParams, useNavigate } from 'react-router-dom'
+import { AlertTriangle, Camera, Clock, FileWarning, MapPin, MessageSquare, Sparkles, X } from 'lucide-react'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
+import { useAuth } from '../../hooks/useAuth'
 import PageHeader from '../../components/ui/PageHeader'
 import Button from '../../components/ui/Button'
 import Badge from '@shared/components/ui/Badge'
@@ -15,12 +17,14 @@ import {
   PROJECT_STATUS_LABELS,
   PROJECT_STATUS_TONES,
   MONITORING_VISIBLE_STATUSES,
+  MONITORING_EDITABLE_STATUSES,
   PROCUREMENT_STATUS_LABELS,
   PROCUREMENT_STATUS_TONES,
 } from '@shared/utils/projectStatus'
 import { evaluateProjectDss } from '@shared/utils/decisionSupport'
 import { formatImageMetadata } from '../../utils/imageProcessing'
 import { isWithinDonsol } from '@shared/utils/geo'
+import { ROLES, ROLE_LABELS } from '../../utils/roles'
 
 const IMAGE_STAGE_LABELS = {
   BEFORE: 'Before',
@@ -28,6 +32,29 @@ const IMAGE_STAGE_LABELS = {
   AFTER: 'After',
   ISSUE: 'Issue',
   OTHER: 'Other',
+}
+
+// Advisory-only AI read of a photo (see supabase/functions/analyze-site-photo)
+// — deliberately never a percentage, only a qualitative stage note and an
+// optional anomaly flag. Renders nothing until ai_reviewed_at is set.
+function AiObservationNote({ image }) {
+  if (!image.ai_reviewed_at) return null
+  return (
+    <div className="mt-1 space-y-0.5 border-t border-slate-100 pt-1">
+      {image.ai_stage_observation ? (
+        <p className="flex items-start gap-1 text-[11px] text-slate-500">
+          <Sparkles className="mt-0.5 h-3 w-3 shrink-0 text-blue-400" aria-hidden="true" />
+          <span>{image.ai_stage_observation}</span>
+        </p>
+      ) : null}
+      {image.ai_anomaly_detected ? (
+        <p className="flex items-start gap-1 text-[11px] text-amber-700">
+          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+          <span>{image.ai_anomaly_notes || 'AI flagged this photo for review.'}</span>
+        </p>
+      ) : null}
+    </div>
+  )
 }
 
 function Field({ label, children }) {
@@ -39,6 +66,151 @@ function Field({ label, children }) {
   )
 }
 
+// On-demand modal for Monitoring History, same createPortal/backdrop pattern
+// as LocationModal — keeps the page short instead of always listing every
+// update + photo inline, mirroring the same change on Engineering's own
+// ProjectMonitoringDetail.jsx.
+function MonitoringHistoryModal({ open, onClose, updates, imagesByUpdate }) {
+  useEffect(() => {
+    if (!open) return undefined
+
+    function handleKeyDown(event) {
+      if (event.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [open, onClose])
+
+  if (!open) return null
+
+  const unassignedImages = imagesByUpdate.get('unassigned') ?? []
+
+  return createPortal(
+    <div className="fixed inset-0 z-1000 flex items-center justify-center px-4">
+      <button
+        type="button"
+        aria-label="Dismiss dialog"
+        onClick={onClose}
+        className="fixed inset-0 bg-blue-950/40 backdrop-blur-sm"
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="history-modal-title"
+        className="animate-pop-in relative flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-900/5"
+      >
+        <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
+          <h2 id="history-modal-title" className="flex items-center gap-2 text-base font-semibold text-slate-800">
+            <Clock className="h-4 w-4 text-blue-600" aria-hidden="true" />
+            Monitoring History
+          </h2>
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={onClose}
+            className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+          >
+            <X className="h-5 w-5" aria-hidden="true" />
+          </button>
+        </div>
+
+        <div className="overflow-y-auto p-5">
+          {updates.length === 0 ? (
+            <p className="text-sm text-slate-500">No monitoring updates reported yet.</p>
+          ) : (
+            <ul className="space-y-4">
+              {updates.map((entry) => (
+                <li key={entry.id} className="rounded-md border border-slate-100 bg-slate-50 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-sm font-medium text-slate-800">
+                      {entry.progress_percentage != null ? `${entry.progress_percentage}% complete` : 'Update'}
+                    </span>
+                    <span className="text-xs text-slate-500">{formatDate(entry.report_date)}</span>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">by {entry.reporter?.full_name ?? '—'}</p>
+                  {entry.weather_condition ? (
+                    <p className="mt-1 text-xs text-slate-500">Weather: {entry.weather_condition}</p>
+                  ) : null}
+                  {entry.narrative_report ? (
+                    <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{entry.narrative_report}</p>
+                  ) : null}
+                  {entry.issues_encountered ? (
+                    <p className="mt-1 whitespace-pre-wrap text-sm text-red-700">
+                      Issues: {entry.issues_encountered}
+                    </p>
+                  ) : null}
+
+                  {(imagesByUpdate.get(entry.id) ?? []).length > 0 ? (
+                    <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+                      {imagesByUpdate.get(entry.id).map((image) => (
+                        <a
+                          key={image.id}
+                          href={image.signedUrl ?? undefined}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="block overflow-hidden rounded-md border border-slate-200 bg-white"
+                        >
+                          {image.signedUrl ? (
+                            <img
+                              src={image.signedUrl}
+                              alt={image.file_name ?? 'Site photo'}
+                              className="h-28 w-full object-cover"
+                            />
+                          ) : (
+                            <div className="flex h-28 w-full items-center justify-center bg-slate-100">
+                              <Camera className="h-6 w-6 text-slate-300" aria-hidden="true" />
+                            </div>
+                          )}
+                          <div className="p-2">
+                            <Badge tone="neutral">{IMAGE_STAGE_LABELS[image.image_stage] ?? image.image_stage}</Badge>
+                            <p className="mt-1 text-[11px] text-slate-500">
+                              {formatImageMetadata(image.ai_analysis_result) ?? 'Processing pending'}
+                            </p>
+                            <AiObservationNote image={image} />
+                          </div>
+                        </a>
+                      ))}
+                    </div>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {unassignedImages.length > 0 ? (
+            <div className="mt-6 border-t border-slate-100 pt-4">
+              <h3 className="text-sm font-semibold text-slate-800">Other Site Photos</h3>
+              <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+                {unassignedImages.map((image) => (
+                  <a
+                    key={image.id}
+                    href={image.signedUrl ?? undefined}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block overflow-hidden rounded-md border border-slate-200 bg-white"
+                  >
+                    {image.signedUrl ? (
+                      <img src={image.signedUrl} alt={image.file_name ?? 'Site photo'} className="h-28 w-full object-cover" />
+                    ) : null}
+                    <div className="p-2">
+                      <Badge tone="neutral">{IMAGE_STAGE_LABELS[image.image_stage] ?? image.image_stage}</Badge>
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        {formatImageMetadata(image.ai_analysis_result) ?? 'Processing pending'}
+                      </p>
+                      <AiObservationNote image={image} />
+                    </div>
+                  </a>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
 // Read-only counterpart to engineering/ProjectMonitoringDetail.jsx: same data
 // (project_updates + project_images, same signed-URL pattern), no ownership
 // check (any staff member may view via projects_select_staff /
@@ -46,7 +218,9 @@ function Field({ label, children }) {
 // form/upload/edit controls at all — MPDC only ever reads here.
 export default function MpdcProjectMonitoringDetail() {
   const { projectId } = useParams()
+  const navigate = useNavigate()
   const toast = useToast()
+  const { user } = useAuth()
 
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
@@ -55,6 +229,8 @@ export default function MpdcProjectMonitoringDetail() {
   const [updates, setUpdates] = useState([])
   const [images, setImages] = useState([])
   const [locationOpen, setLocationOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [requestingUpdate, setRequestingUpdate] = useState(false)
 
   async function loadProcurement() {
     const { data, error } = await supabase
@@ -97,7 +273,8 @@ export default function MpdcProjectMonitoringDetail() {
     const { data, error } = await supabase
       .from('project_images')
       .select(
-        `id, project_update_id, storage_path, file_name, image_stage, ai_analysis_result, created_at,
+        `id, project_update_id, storage_path, file_name, image_stage, ai_analysis_result,
+         ai_stage_observation, ai_anomaly_detected, ai_anomaly_notes, ai_reviewed_at, created_at,
          uploader:profiles!project_images_uploaded_by_fkey(full_name)`,
       )
       .eq('project_id', projectId)
@@ -165,6 +342,58 @@ export default function MpdcProjectMonitoringDetail() {
     evaluateDss()
   }, [projectId])
 
+  async function handleRequestUpdate() {
+    if (!project) return
+    setRequestingUpdate(true)
+
+    const body = `Requesting a progress update for ${project.title} (${project.project_code}).`
+
+    const { data: inserted, error } = await supabase
+      .from('messages')
+      .insert({
+        sender_id: user.id,
+        sender_role: ROLES.MPDC,
+        recipient_role: ROLES.ENGINEERING,
+        project_id: project.id,
+        body,
+      })
+      .select('id')
+      .single()
+
+    if (error || !inserted) {
+      toast.error('Could not request update', error?.message)
+      setRequestingUpdate(false)
+      return
+    }
+
+    const { data: recipients, error: recipientsError } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('role', ROLES.ENGINEERING)
+      .eq('is_active', true)
+
+    if (recipientsError) {
+      toast.error('Sent, but could not notify the Engineering office', recipientsError.message)
+    } else if (recipients?.length) {
+      const { error: notifyError } = await supabase.from('notifications').insert(
+        recipients.map((recipient) => ({
+          recipient_id: recipient.id,
+          sender_id: user.id,
+          category: 'NEW_MESSAGE',
+          title: `New message from ${ROLE_LABELS[ROLES.MPDC]}`,
+          message: body,
+          related_project_id: project.id,
+          related_message_id: inserted.id,
+        })),
+      )
+      if (notifyError) toast.error('Sent, but could not notify the Engineering office', notifyError.message)
+    }
+
+    setRequestingUpdate(false)
+    toast.success('Update requested', 'Engineering has been notified.')
+    navigate(`/mpdc/messaging?with=${ROLES.ENGINEERING}`)
+  }
+
   if (loading) {
     return <LoadingState label="Loading project..." />
   }
@@ -217,9 +446,23 @@ export default function MpdcProjectMonitoringDetail() {
           { label: project.project_code },
         ]}
         actions={
-          <Badge tone={PROJECT_STATUS_TONES[project.status]}>
-            {PROJECT_STATUS_LABELS[project.status] ?? project.status}
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Badge tone={PROJECT_STATUS_TONES[project.status]}>
+              {PROJECT_STATUS_LABELS[project.status] ?? project.status}
+            </Badge>
+            {MONITORING_EDITABLE_STATUSES.includes(project.status) ? (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                icon={MessageSquare}
+                loading={requestingUpdate}
+                onClick={handleRequestUpdate}
+              >
+                Request Update
+              </Button>
+            ) : null}
+          </div>
         }
       />
 
@@ -272,104 +515,29 @@ export default function MpdcProjectMonitoringDetail() {
           </section>
         ) : null}
 
-        <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
-          <h2 className="text-sm font-semibold text-slate-800">Monitoring History</h2>
-          <p className="mt-0.5 text-xs text-slate-400">
-            Reported by Engineering — read-only. Progress and photos are recorded by the implementing
-            office and cannot be edited here.
-          </p>
-
-          {updates.length === 0 ? (
-            <p className="mt-3 text-sm text-slate-500">No monitoring updates reported yet.</p>
-          ) : (
-            <ul className="mt-4 space-y-4">
-              {updates.map((entry) => (
-                <li key={entry.id} className="rounded-md border border-slate-100 bg-slate-50 p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-sm font-medium text-slate-800">
-                      {entry.progress_percentage != null ? `${entry.progress_percentage}% complete` : 'Update'}
-                    </span>
-                    <span className="text-xs text-slate-500">{formatDate(entry.report_date)}</span>
-                  </div>
-                  <p className="mt-1 text-xs text-slate-500">by {entry.reporter?.full_name ?? '—'}</p>
-                  {entry.weather_condition ? (
-                    <p className="mt-1 text-xs text-slate-500">Weather: {entry.weather_condition}</p>
-                  ) : null}
-                  {entry.narrative_report ? (
-                    <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{entry.narrative_report}</p>
-                  ) : null}
-                  {entry.issues_encountered ? (
-                    <p className="mt-1 whitespace-pre-wrap text-sm text-red-700">
-                      Issues: {entry.issues_encountered}
-                    </p>
-                  ) : null}
-
-                  {(imagesByUpdate.get(entry.id) ?? []).length > 0 ? (
-                    <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-                      {imagesByUpdate.get(entry.id).map((image) => (
-                        <a
-                          key={image.id}
-                          href={image.signedUrl ?? undefined}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="block overflow-hidden rounded-md border border-slate-200 bg-white"
-                        >
-                          {image.signedUrl ? (
-                            <img
-                              src={image.signedUrl}
-                              alt={image.file_name ?? 'Site photo'}
-                              className="h-28 w-full object-cover"
-                            />
-                          ) : (
-                            <div className="flex h-28 w-full items-center justify-center bg-slate-100">
-                              <Camera className="h-6 w-6 text-slate-300" aria-hidden="true" />
-                            </div>
-                          )}
-                          <div className="p-2">
-                            <Badge tone="neutral">{IMAGE_STAGE_LABELS[image.image_stage] ?? image.image_stage}</Badge>
-                            <p className="mt-1 text-[11px] text-slate-500">
-                              {formatImageMetadata(image.ai_analysis_result) ?? 'Processing pending'}
-                            </p>
-                          </div>
-                        </a>
-                      ))}
-                    </div>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          )}
+        <section className="flex items-center justify-between gap-3 rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-800">Monitoring History</h2>
+            <p className="mt-0.5 text-xs text-slate-400">
+              {updates.length === 0
+                ? 'No monitoring updates reported yet.'
+                : `${updates.length} update${updates.length === 1 ? '' : 's'} reported by Engineering.`}
+            </p>
+          </div>
+          <Button type="button" variant="secondary" size="sm" icon={Clock} onClick={() => setHistoryOpen(true)}>
+            View History
+          </Button>
         </section>
-
-        {(imagesByUpdate.get('unassigned') ?? []).length > 0 ? (
-          <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
-            <h2 className="text-sm font-semibold text-slate-800">Other Site Photos</h2>
-            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-              {imagesByUpdate.get('unassigned').map((image) => (
-                <a
-                  key={image.id}
-                  href={image.signedUrl ?? undefined}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="block overflow-hidden rounded-md border border-slate-200 bg-white"
-                >
-                  {image.signedUrl ? (
-                    <img src={image.signedUrl} alt={image.file_name ?? 'Site photo'} className="h-28 w-full object-cover" />
-                  ) : null}
-                  <div className="p-2">
-                    <Badge tone="neutral">{IMAGE_STAGE_LABELS[image.image_stage] ?? image.image_stage}</Badge>
-                    <p className="mt-1 text-[11px] text-slate-500">
-                      {formatImageMetadata(image.ai_analysis_result) ?? 'Processing pending'}
-                    </p>
-                  </div>
-                </a>
-              ))}
-            </div>
-          </section>
-        ) : null}
       </div>
 
       <LocationModal open={locationOpen} project={project} onClose={() => setLocationOpen(false)} />
+
+      <MonitoringHistoryModal
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        updates={updates}
+        imagesByUpdate={imagesByUpdate}
+      />
     </div>
   )
 }

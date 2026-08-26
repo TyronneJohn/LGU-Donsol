@@ -3,11 +3,40 @@ import { Outlet } from 'react-router-dom'
 import Sidebar from '../components/ui/Sidebar'
 import Topbar from '../components/ui/Topbar'
 
+const SIDEBAR_COLLAPSED_KEY = 'lgu-donsol:sidebar-collapsed'
+
+function readSidebarCollapsed() {
+  try {
+    return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function writeSidebarCollapsed(value) {
+  try {
+    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, value ? '1' : '0')
+  } catch {
+    // Private browsing, storage disabled, or quota exceeded — losing the
+    // remembered preference is fine; it just defaults to expanded again.
+  }
+}
+
 // Shared authenticated shell (sidebar + topbar + content) composed by every
 // per-role layout (AdminLayout, MpdcLayout, EngineeringLayout, BacLayout)
-// with its own title and nav items.
+// with its own title and nav items. The collapsed rail preference applies
+// the same way across every office since it lives here, not per-layout.
 export default function DashboardShell({ title, navItems }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed)
+
+  function toggleSidebarCollapsed() {
+    setSidebarCollapsed((current) => {
+      const next = !current
+      writeSidebarCollapsed(next)
+      return next
+    })
+  }
 
   return (
     <div className="brand-surface relative flex min-h-screen">
@@ -26,6 +55,8 @@ export default function DashboardShell({ title, navItems }) {
         navItems={navItems}
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
+        collapsed={sidebarCollapsed}
+        onToggleCollapse={toggleSidebarCollapsed}
       />
 
       <div className="relative flex min-w-0 flex-1 flex-col">

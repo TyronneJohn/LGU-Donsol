@@ -1,11 +1,14 @@
-import { Bell, CheckCheck, Inbox, MessageSquare } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { Bell, CheckCheck, Inbox, MessageSquare, X } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useDismissablePopover } from '../../hooks/useDismissablePopover'
 import { useNotifications } from '../../hooks/useNotifications'
 import { useAuth } from '../../hooks/useAuth'
 import { ROLE_HOME_PATH, ROLE_LABELS } from '../../utils/roles'
-import { formatRelativeTime } from '@shared/utils/format'
+import { formatRelativeTime, formatDateTime } from '@shared/utils/format'
 import EmptyState from '@shared/components/ui/EmptyState'
+import Button from './Button'
 
 // Categories that fire while a project is still pre-approval (draft,
 // submitted, returned, rejected, or awaiting endorsement) — none of those
@@ -39,24 +42,48 @@ function getProjectNotificationPath(role, category, projectId) {
   return null
 }
 
+// Where "Open" in the detail dialog below should lead, mirroring
+// handleSelect's old direct-navigate logic — kept as a standalone function
+// so both the dialog's button and (if ever needed) other callers can reach
+// it without going through component state.
+function resolveNotificationPath(role, notification) {
+  if (notification.category === 'NEW_MESSAGE' && notification.sender?.role && role) {
+    return `${ROLE_HOME_PATH[role]}/messaging?with=${notification.sender.role}`
+  }
+  return notification.related_project_id
+    ? getProjectNotificationPath(role, notification.category, notification.related_project_id)
+    : null
+}
+
 export default function NotificationBell() {
   const { open, setOpen, close, containerRef } = useDismissablePopover()
   const { role } = useAuth()
   const navigate = useNavigate()
   const { notifications, unreadCount, markOneRead, markAllRead } = useNotifications()
+  const [detail, setDetail] = useState(null)
 
+  useEffect(() => {
+    if (!detail) return undefined
+    function handleKeyDown(event) {
+      if (event.key === 'Escape') setDetail(null)
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [detail])
+
+  // Clicking a notification no longer jumps straight to its project/
+  // conversation — it opens a small dialog showing the full title/message
+  // first (the dropdown list below truncates both to one line each), so the
+  // reader actually sees what came in before choosing to proceed anywhere.
   async function handleSelect(notification) {
     if (!notification.is_read) await markOneRead(notification.id)
     close()
+    setDetail(notification)
+  }
 
-    if (notification.category === 'NEW_MESSAGE' && notification.sender?.role && role) {
-      navigate(`${ROLE_HOME_PATH[role]}/messaging?with=${notification.sender.role}`)
-      return
-    }
-
-    const path = notification.related_project_id
-      ? getProjectNotificationPath(role, notification.category, notification.related_project_id)
-      : null
+  function handleProceed() {
+    const path = resolveNotificationPath(role, detail)
+    setDetail(null)
     if (path) navigate(path)
   }
 
@@ -159,6 +186,67 @@ export default function NotificationBell() {
           )}
         </div>
       ) : null}
+
+      {detail
+        ? createPortal(
+            <div className="fixed inset-0 z-1100 flex items-center justify-center px-4">
+              <button
+                type="button"
+                aria-label="Dismiss dialog"
+                onClick={() => setDetail(null)}
+                className="fixed inset-0 bg-blue-950/40 backdrop-blur-sm"
+              />
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="notification-detail-title"
+                className="animate-pop-in relative w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl ring-1 ring-slate-900/5"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <h2 id="notification-detail-title" className="text-base font-semibold text-slate-800">
+                    {detail.title}
+                  </h2>
+                  <button
+                    type="button"
+                    aria-label="Close"
+                    onClick={() => setDetail(null)}
+                    className="shrink-0 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                  >
+                    <X className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </div>
+
+                <p className="mt-1 flex items-center gap-1.5 text-xs text-slate-400">
+                  <span className="font-medium text-slate-500">
+                    {detail.sender?.role
+                      ? ROLE_LABELS[detail.sender.role]
+                      : detail.category === 'NEW_MESSAGE'
+                        ? null
+                        : 'System'}
+                  </span>
+                  <span aria-hidden="true">·</span>
+                  <span>{formatDateTime(detail.created_at)}</span>
+                </p>
+
+                {detail.message ? (
+                  <p className="mt-3 whitespace-pre-wrap text-sm text-slate-700">{detail.message}</p>
+                ) : null}
+
+                <div className="mt-5 flex justify-end gap-2">
+                  <Button variant="secondary" size="sm" onClick={() => setDetail(null)}>
+                    Close
+                  </Button>
+                  {resolveNotificationPath(role, detail) ? (
+                    <Button size="sm" onClick={handleProceed}>
+                      Open
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   )
 }

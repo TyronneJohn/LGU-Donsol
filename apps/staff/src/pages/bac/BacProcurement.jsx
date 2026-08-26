@@ -37,18 +37,20 @@ export default function BacProcurement() {
   async function loadRows() {
     setLoading(true)
 
-    // Current + past procurement cycles, each carrying its project. Projects
-    // that are procurement-eligible but haven't had a cycle opened yet won't
-    // show up here, so they're fetched separately and merged in as
+    // One procurement record per project (is_current is always true — there
+    // is no past-cycle concept here anymore). Projects that are
+    // procurement-eligible but haven't had a cycle opened yet won't show up
+    // in that query, so they're fetched separately and merged in as
     // "not started" rows.
     const [procurementResult, eligibleProjectsResult] = await Promise.all([
       supabase
         .from('procurement')
         .select(
-          `id, project_id, status, is_current, mode_of_procurement, abc_amount, contract_amount, created_at,
+          `id, project_id, status, mode_of_procurement, abc_amount, contract_amount, created_at,
            contractors(name),
            projects(id, project_code, title, status, offices(name))`,
         )
+        .eq('is_current', true)
         .order('created_at', { ascending: false }),
       supabase
         .from('projects')
@@ -72,7 +74,6 @@ export default function BacProcurement() {
         id: `not-started-${p.id}`,
         project_id: p.id,
         status: null,
-        is_current: true,
         abc_amount: p.approved_budget,
         contractors: null,
         projects: p,
@@ -152,12 +153,9 @@ export default function BacProcurement() {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filtered.map((row) => (
-                <tr key={row.id} className={row.is_current ? '' : 'opacity-60'}>
+                <tr key={row.id}>
                   <td className="px-4 py-2.5 text-slate-800">{row.projects?.project_code ?? '—'}</td>
-                  <td className="px-4 py-2.5 text-slate-800">
-                    {row.projects?.title}
-                    {!row.is_current ? <span className="ml-2 text-xs text-slate-400">(past cycle)</span> : null}
-                  </td>
+                  <td className="px-4 py-2.5 text-slate-800">{row.projects?.title}</td>
                   <td className="px-4 py-2.5 text-slate-600">{row.projects?.offices?.name ?? '—'}</td>
                   <td className="px-4 py-2.5">
                     {row.status ? (

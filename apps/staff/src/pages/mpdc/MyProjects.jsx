@@ -21,7 +21,7 @@ export default function MyProjects() {
     setLoading(true)
     const { data, error } = await supabase
       .from('projects')
-      .select('id, project_code, title, status, estimated_cost, created_at, offices(name)')
+      .select('id, project_code, title, status, estimated_cost, approved_budget, created_at, offices(name)')
       .eq('created_by', user.id)
       .order('created_at', { ascending: false })
 
@@ -83,7 +83,9 @@ export default function MyProjects() {
                   <td className="px-4 py-2.5 text-slate-800">{project.project_code ?? '—'}</td>
                   <td className="px-4 py-2.5 text-slate-800">{project.title}</td>
                   <td className="px-4 py-2.5 text-slate-600">{project.offices?.name ?? '—'}</td>
-                  <td className="px-4 py-2.5 text-slate-600">{formatCurrency(project.estimated_cost)}</td>
+                  <td className="px-4 py-2.5 text-slate-600">
+                    {formatCurrency(project.approved_budget ?? project.estimated_cost)}
+                  </td>
                   <td className="px-4 py-2.5">
                     <Badge tone={PROJECT_STATUS_TONES[project.status]}>
                       {PROJECT_STATUS_LABELS[project.status] ?? project.status}

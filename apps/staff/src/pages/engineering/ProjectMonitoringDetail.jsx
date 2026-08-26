@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useParams } from 'react-router-dom'
-import { Camera, FileWarning, MapPin, Send, X } from 'lucide-react'
+import { AlertTriangle, Camera, CameraOff, Clock, FileWarning, MapPin, Send, Sparkles, X } from 'lucide-react'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
 import { useAuth } from '../../hooks/useAuth'
@@ -38,10 +39,285 @@ const EMPTY_FORM = {
   progress_percentage: '',
   narrative_report: '',
   issues_encountered: '',
-  weather_condition: '',
   report_date: new Date().toISOString().slice(0, 10),
-  latitude: '',
-  longitude: '',
+}
+
+// Live in-page camera, for taking a fresh site photo on the spot rather than
+// only ever picking an existing file from the gallery (which says nothing
+// about when/where the photo was actually taken). Stays open across
+// multiple captures — a site visit usually produces more than one photo —
+// closed explicitly via Done or Escape. The plain <input type="file"
+// capture="environment"> next to it is kept too, since this getUserMedia
+// path needs a secure context (HTTPS/localhost) and camera permission, and
+// simply won't be available on every device/browser.
+function CameraCapture({ onCapture, onClose }) {
+  const videoRef = useRef(null)
+  const streamRef = useRef(null)
+  const [error, setError] = useState(null)
+  const [shotCount, setShotCount] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function start() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment' },
+          audio: false,
+        })
+        if (cancelled) {
+          stream.getTracks().forEach((track) => track.stop())
+          return
+        }
+        streamRef.current = stream
+        if (videoRef.current) videoRef.current.srcObject = stream
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Could not access the camera.')
+      }
+    }
+    start()
+
+    return () => {
+      cancelled = true
+      streamRef.current?.getTracks().forEach((track) => track.stop())
+      streamRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
+    function handleKeyDown(event) {
+      if (event.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [onClose])
+
+  function capture() {
+    const video = videoRef.current
+    if (!video || !video.videoWidth) return
+    const canvas = document.createElement('canvas')
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
+    canvas.getContext('2d').drawImage(video, 0, 0)
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) return
+        const file = new File([blob], `site-photo-${Date.now()}.jpg`, { type: 'image/jpeg' })
+        onCapture(file)
+        setShotCount((count) => count + 1)
+      },
+      'image/jpeg',
+      0.9,
+    )
+  }
+
+  return createPortal(
+    <div className="fixed inset-0 z-1100 flex items-center justify-center bg-slate-950/80 px-4">
+      <div className="w-full max-w-lg overflow-hidden rounded-2xl bg-slate-900 shadow-2xl">
+        <div className="flex items-center justify-between px-4 py-3">
+          <p className="text-sm font-medium text-white">Take Site Photo{shotCount > 0 ? ` (${shotCount} taken)` : ''}</p>
+          <button
+            type="button"
+            aria-label="Close camera"
+            onClick={onClose}
+            className="rounded-md p-1 text-slate-300 hover:bg-white/10 hover:text-white"
+          >
+            <X className="h-5 w-5" aria-hidden="true" />
+          </button>
+        </div>
+
+        {error ? (
+          <div className="flex flex-col items-center gap-2 px-6 py-12 text-center">
+            <CameraOff className="h-8 w-8 text-slate-500" aria-hidden="true" />
+            <p className="text-sm text-slate-300">{error}</p>
+            <p className="text-xs text-slate-500">
+              Use the regular file picker below instead, or check your browser's camera permission.
+            </p>
+          </div>
+        ) : (
+          <video ref={videoRef} autoPlay playsInline muted className="aspect-video w-full bg-black object-cover" />
+        )}
+
+        <div className="flex items-center justify-center gap-3 px-4 py-4">
+          <Button type="button" variant="secondary" size="sm" onClick={onClose}>
+            Done
+          </Button>
+          <Button type="button" icon={Camera} onClick={capture} disabled={!!error}>
+            Capture
+          </Button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
+// Advisory-only AI read of a photo — see analyze-site-photo. Deliberately
+// never shows a percentage; only a qualitative stage note and an optional
+// anomaly flag. Renders nothing while ai_reviewed_at is still null (either
+// not yet analyzed, or the AI call failed silently) rather than showing a
+// "pending" state forever if ANTHROPIC_API_KEY was never configured.
+function AiObservationNote({ image }) {
+  if (!image.ai_reviewed_at) return null
+  return (
+    <div className="mt-1 space-y-0.5 border-t border-slate-100 pt-1">
+      {image.ai_stage_observation ? (
+        <p className="flex items-start gap-1 text-[11px] text-slate-500">
+          <Sparkles className="mt-0.5 h-3 w-3 shrink-0 text-blue-400" aria-hidden="true" />
+          <span>{image.ai_stage_observation}</span>
+        </p>
+      ) : null}
+      {image.ai_anomaly_detected ? (
+        <p className="flex items-start gap-1 text-[11px] text-amber-700">
+          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+          <span>{image.ai_anomaly_notes || 'AI flagged this photo for review.'}</span>
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
+// Monitoring History used to render inline on the page, pushing everything
+// below the update form down further with every new entry. Moved into an
+// on-demand modal (same createPortal/backdrop pattern as LocationModal) so
+// the page stays short right after submitting an update, with history just
+// a click away instead of always taking up space.
+function MonitoringHistoryModal({ open, onClose, updates, imagesByUpdate }) {
+  useEffect(() => {
+    if (!open) return undefined
+
+    function handleKeyDown(event) {
+      if (event.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [open, onClose])
+
+  if (!open) return null
+
+  const unassignedImages = imagesByUpdate.get('unassigned') ?? []
+
+  return createPortal(
+    <div className="fixed inset-0 z-1000 flex items-center justify-center px-4">
+      <button
+        type="button"
+        aria-label="Dismiss dialog"
+        onClick={onClose}
+        className="fixed inset-0 bg-blue-950/40 backdrop-blur-sm"
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="history-modal-title"
+        className="animate-pop-in relative flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-900/5"
+      >
+        <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
+          <h2 id="history-modal-title" className="flex items-center gap-2 text-base font-semibold text-slate-800">
+            <Clock className="h-4 w-4 text-blue-600" aria-hidden="true" />
+            Monitoring History
+          </h2>
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={onClose}
+            className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+          >
+            <X className="h-5 w-5" aria-hidden="true" />
+          </button>
+        </div>
+
+        <div className="overflow-y-auto p-5">
+          {updates.length === 0 ? (
+            <p className="text-sm text-slate-500">No monitoring updates yet.</p>
+          ) : (
+            <ul className="space-y-4">
+              {updates.map((entry) => (
+                <li key={entry.id} className="rounded-md border border-slate-100 bg-slate-50 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-sm font-medium text-slate-800">
+                      {entry.progress_percentage != null ? `${entry.progress_percentage}% complete` : 'Update'}
+                    </span>
+                    <span className="text-xs text-slate-500">{formatDate(entry.report_date)}</span>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">by {entry.reporter?.full_name ?? '—'}</p>
+                  {entry.narrative_report ? (
+                    <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{entry.narrative_report}</p>
+                  ) : null}
+                  {entry.issues_encountered ? (
+                    <p className="mt-1 whitespace-pre-wrap text-sm text-red-700">
+                      Issues: {entry.issues_encountered}
+                    </p>
+                  ) : null}
+
+                  {(imagesByUpdate.get(entry.id) ?? []).length > 0 ? (
+                    <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+                      {imagesByUpdate.get(entry.id).map((image) => (
+                        <a
+                          key={image.id}
+                          href={image.signedUrl ?? undefined}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="group block overflow-hidden rounded-md border border-slate-200 bg-white"
+                        >
+                          {image.signedUrl ? (
+                            <img
+                              src={image.signedUrl}
+                              alt={image.file_name ?? 'Site photo'}
+                              className="h-28 w-full object-cover"
+                            />
+                          ) : (
+                            <div className="flex h-28 w-full items-center justify-center bg-slate-100">
+                              <Camera className="h-6 w-6 text-slate-300" aria-hidden="true" />
+                            </div>
+                          )}
+                          <div className="p-2">
+                            <Badge tone="neutral">{IMAGE_STAGE_LABELS[image.image_stage] ?? image.image_stage}</Badge>
+                            <p className="mt-1 text-[11px] text-slate-500">
+                              {formatImageMetadata(image.ai_analysis_result) ?? 'Processing pending'}
+                            </p>
+                            <AiObservationNote image={image} />
+                          </div>
+                        </a>
+                      ))}
+                    </div>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {unassignedImages.length > 0 ? (
+            <div className="mt-6 border-t border-slate-100 pt-4">
+              <h3 className="text-sm font-semibold text-slate-800">Other Site Photos</h3>
+              <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+                {unassignedImages.map((image) => (
+                  <a
+                    key={image.id}
+                    href={image.signedUrl ?? undefined}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block overflow-hidden rounded-md border border-slate-200 bg-white"
+                  >
+                    {image.signedUrl ? (
+                      <img src={image.signedUrl} alt={image.file_name ?? 'Site photo'} className="h-28 w-full object-cover" />
+                    ) : null}
+                    <div className="p-2">
+                      <Badge tone="neutral">{IMAGE_STAGE_LABELS[image.image_stage] ?? image.image_stage}</Badge>
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        {formatImageMetadata(image.ai_analysis_result) ?? 'Processing pending'}
+                      </p>
+                      <AiObservationNote image={image} />
+                    </div>
+                  </a>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  )
 }
 
 export default function ProjectMonitoringDetail() {
@@ -55,17 +331,18 @@ export default function ProjectMonitoringDetail() {
   const [updates, setUpdates] = useState([])
   const [images, setImages] = useState([])
   const [locationOpen, setLocationOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
 
   const [form, setForm] = useState(EMPTY_FORM)
   const [photoQueue, setPhotoQueue] = useState([])
-  const [locating, setLocating] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [cameraOpen, setCameraOpen] = useState(false)
 
   async function loadUpdates() {
     const { data, error } = await supabase
       .from('project_updates')
       .select(
-        `id, progress_percentage, narrative_report, issues_encountered, weather_condition, report_date,
+        `id, progress_percentage, narrative_report, issues_encountered, report_date,
          reporter:profiles!project_updates_reported_by_fkey(full_name)`,
       )
       .eq('project_id', projectId)
@@ -84,7 +361,8 @@ export default function ProjectMonitoringDetail() {
     const { data, error } = await supabase
       .from('project_images')
       .select(
-        `id, project_update_id, storage_path, file_name, image_stage, ai_analysis_status, ai_analysis_result, created_at,
+        `id, project_update_id, storage_path, file_name, image_stage, ai_analysis_status, ai_analysis_result,
+         ai_stage_observation, ai_anomaly_detected, ai_anomaly_notes, ai_reviewed_at, created_at,
          uploader:profiles!project_images_uploaded_by_fkey(full_name)`,
       )
       .eq('project_id', projectId)
@@ -185,25 +463,6 @@ export default function ProjectMonitoringDetail() {
     setPhotoQueue((current) => current.filter((photo) => photo.id !== id))
   }
 
-  function useMyLocation() {
-    if (!navigator.geolocation) {
-      toast.error('Location unavailable', 'Your browser does not support geolocation.')
-      return
-    }
-    setLocating(true)
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        updateField('latitude', position.coords.latitude.toFixed(6))
-        updateField('longitude', position.coords.longitude.toFixed(6))
-        setLocating(false)
-      },
-      (error) => {
-        toast.error('Could not get location', error.message)
-        setLocating(false)
-      },
-    )
-  }
-
   async function handleSubmitUpdate(event) {
     event.preventDefault()
 
@@ -227,10 +486,7 @@ export default function ProjectMonitoringDetail() {
         progress_percentage: Number(form.progress_percentage),
         narrative_report: form.narrative_report.trim() || null,
         issues_encountered: form.issues_encountered.trim() || null,
-        weather_condition: form.weather_condition.trim() || null,
         report_date: form.report_date,
-        latitude: form.latitude === '' ? null : Number(form.latitude),
-        longitude: form.longitude === '' ? null : Number(form.longitude),
       })
       .select('id')
       .single()
@@ -250,20 +506,27 @@ export default function ProjectMonitoringDetail() {
         const { error: uploadError } = await supabase.storage.from('project-images').upload(path, photo.file)
         if (uploadError) throw uploadError
 
-        const { error: insertError } = await supabase.from('project_images').insert({
-          project_id: project.id,
-          project_update_id: newUpdate.id,
-          uploaded_by: user.id,
-          storage_path: path,
-          file_name: photo.file.name,
-          image_stage: photo.stage,
-          captured_at: new Date().toISOString(),
-          latitude: form.latitude === '' ? null : Number(form.latitude),
-          longitude: form.longitude === '' ? null : Number(form.longitude),
-          ai_analysis_status: 'PROCESSED',
-          ai_analysis_result: metadata,
-        })
+        const { data: insertedImage, error: insertError } = await supabase
+          .from('project_images')
+          .insert({
+            project_id: project.id,
+            project_update_id: newUpdate.id,
+            uploaded_by: user.id,
+            storage_path: path,
+            file_name: photo.file.name,
+            image_stage: photo.stage,
+            captured_at: new Date().toISOString(),
+            ai_analysis_status: 'PROCESSED',
+            ai_analysis_result: metadata,
+          })
+          .select('id')
+          .single()
         if (insertError) throw insertError
+
+        // Fire-and-forget: the AI read is advisory-only (see
+        // analyze-site-photo) and must never block or fail the monitoring
+        // update itself — the photo is already saved either way.
+        supabase.functions.invoke('analyze-site-photo', { body: { image_id: insertedImage.id } }).catch(() => {})
       } catch (photoError) {
         failedPhotos.push(`${photo.file.name}: ${photoError.message}`)
       }
@@ -419,58 +682,22 @@ export default function ProjectMonitoringDetail() {
                   className={textareaClass}
                 />
               </div>
-
-              <div>
-                <label htmlFor="weather_condition" className="mb-1 block text-sm font-medium text-slate-700">
-                  Weather Condition
-                </label>
-                <input
-                  id="weather_condition"
-                  value={form.weather_condition}
-                  onChange={(event) => updateField('weather_condition', event.target.value)}
-                  className={inputClass}
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-sm font-medium text-slate-700">Site Coordinates</label>
-                <div className="flex gap-2">
-                  <input
-                    aria-label="Latitude"
-                    placeholder="Latitude"
-                    value={form.latitude}
-                    onChange={(event) => updateField('latitude', event.target.value)}
-                    className={inputClass}
-                  />
-                  <input
-                    aria-label="Longitude"
-                    placeholder="Longitude"
-                    value={form.longitude}
-                    onChange={(event) => updateField('longitude', event.target.value)}
-                    className={inputClass}
-                  />
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="md"
-                    icon={MapPin}
-                    loading={locating}
-                    onClick={useMyLocation}
-                  >
-                    Use
-                  </Button>
-                </div>
-              </div>
             </div>
 
             <div className="mt-5 rounded-md border border-slate-200 bg-slate-50 p-4">
-              <label htmlFor="photos" className="mb-1 block text-sm font-medium text-slate-700">
-                Site Photos
-              </label>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label htmlFor="photos" className="mb-1 block text-sm font-medium text-slate-700">
+                  Site Photos
+                </label>
+                <Button type="button" variant="secondary" size="sm" icon={Camera} onClick={() => setCameraOpen(true)}>
+                  Take Photo
+                </Button>
+              </div>
               <input
                 id="photos"
                 type="file"
                 accept="image/*"
+                capture="environment"
                 multiple
                 onChange={(event) => addPhotos(event.target.files)}
                 className="block w-full text-sm text-slate-600"
@@ -515,7 +742,17 @@ export default function ProjectMonitoringDetail() {
             </div>
 
             <div className="mt-5">
-              <Button type="submit" icon={Send} loading={submitting}>
+              <Button
+                type="submit"
+                icon={Send}
+                loading={submitting}
+                disabled={
+                  form.progress_percentage === '' ||
+                  Number(form.progress_percentage) < 0 ||
+                  Number(form.progress_percentage) > 100 ||
+                  !form.report_date
+                }
+              >
                 Submit Update
               </Button>
             </div>
@@ -528,99 +765,36 @@ export default function ProjectMonitoringDetail() {
           </section>
         )}
 
-        <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
-          <h2 className="text-sm font-semibold text-slate-800">Monitoring History</h2>
-          {updates.length === 0 ? (
-            <p className="mt-2 text-sm text-slate-500">No monitoring updates yet.</p>
-          ) : (
-            <ul className="mt-4 space-y-4">
-              {updates.map((entry) => (
-                <li key={entry.id} className="rounded-md border border-slate-100 bg-slate-50 p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-sm font-medium text-slate-800">
-                      {entry.progress_percentage != null ? `${entry.progress_percentage}% complete` : 'Update'}
-                    </span>
-                    <span className="text-xs text-slate-500">{formatDate(entry.report_date)}</span>
-                  </div>
-                  <p className="mt-1 text-xs text-slate-500">by {entry.reporter?.full_name ?? '—'}</p>
-                  {entry.weather_condition ? (
-                    <p className="mt-1 text-xs text-slate-500">Weather: {entry.weather_condition}</p>
-                  ) : null}
-                  {entry.narrative_report ? (
-                    <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{entry.narrative_report}</p>
-                  ) : null}
-                  {entry.issues_encountered ? (
-                    <p className="mt-1 whitespace-pre-wrap text-sm text-red-700">
-                      Issues: {entry.issues_encountered}
-                    </p>
-                  ) : null}
-
-                  {(imagesByUpdate.get(entry.id) ?? []).length > 0 ? (
-                    <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-                      {imagesByUpdate.get(entry.id).map((image) => (
-                        <a
-                          key={image.id}
-                          href={image.signedUrl ?? undefined}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="group block overflow-hidden rounded-md border border-slate-200 bg-white"
-                        >
-                          {image.signedUrl ? (
-                            <img
-                              src={image.signedUrl}
-                              alt={image.file_name ?? 'Site photo'}
-                              className="h-28 w-full object-cover"
-                            />
-                          ) : (
-                            <div className="flex h-28 w-full items-center justify-center bg-slate-100">
-                              <Camera className="h-6 w-6 text-slate-300" aria-hidden="true" />
-                            </div>
-                          )}
-                          <div className="p-2">
-                            <Badge tone="neutral">{IMAGE_STAGE_LABELS[image.image_stage] ?? image.image_stage}</Badge>
-                            <p className="mt-1 text-[11px] text-slate-500">
-                              {formatImageMetadata(image.ai_analysis_result) ?? 'Processing pending'}
-                            </p>
-                          </div>
-                        </a>
-                      ))}
-                    </div>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          )}
+        <section className="flex items-center justify-between gap-3 rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-800">Monitoring History</h2>
+            <p className="mt-0.5 text-xs text-slate-500">
+              {updates.length === 0
+                ? 'No monitoring updates yet.'
+                : `${updates.length} update${updates.length === 1 ? '' : 's'} recorded.`}
+            </p>
+          </div>
+          <Button type="button" variant="secondary" size="sm" icon={Clock} onClick={() => setHistoryOpen(true)}>
+            View History
+          </Button>
         </section>
-
-        {(imagesByUpdate.get('unassigned') ?? []).length > 0 ? (
-          <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
-            <h2 className="text-sm font-semibold text-slate-800">Other Site Photos</h2>
-            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-              {imagesByUpdate.get('unassigned').map((image) => (
-                <a
-                  key={image.id}
-                  href={image.signedUrl ?? undefined}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="block overflow-hidden rounded-md border border-slate-200 bg-white"
-                >
-                  {image.signedUrl ? (
-                    <img src={image.signedUrl} alt={image.file_name ?? 'Site photo'} className="h-28 w-full object-cover" />
-                  ) : null}
-                  <div className="p-2">
-                    <Badge tone="neutral">{IMAGE_STAGE_LABELS[image.image_stage] ?? image.image_stage}</Badge>
-                    <p className="mt-1 text-[11px] text-slate-500">
-                      {formatImageMetadata(image.ai_analysis_result) ?? 'Processing pending'}
-                    </p>
-                  </div>
-                </a>
-              ))}
-            </div>
-          </section>
-        ) : null}
       </div>
 
       <LocationModal open={locationOpen} project={project} onClose={() => setLocationOpen(false)} />
+
+      <MonitoringHistoryModal
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        updates={updates}
+        imagesByUpdate={imagesByUpdate}
+      />
+
+      {cameraOpen ? (
+        <CameraCapture
+          onCapture={(file) => addPhotos([file])}
+          onClose={() => setCameraOpen(false)}
+        />
+      ) : null}
     </div>
   )
 }

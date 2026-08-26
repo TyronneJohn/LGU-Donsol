@@ -16,6 +16,8 @@ import EmptyState from '@shared/components/ui/EmptyState'
 import { formatCurrency, formatDateTime } from '@shared/utils/format'
 import { PROJECT_STATUS_LABELS, PROJECT_STATUS_TONES } from '@shared/utils/projectStatus'
 import { DONSOL_BARANGAYS } from '@shared/utils/barangays'
+import { DONSOL_BARANGAY_CENTROIDS } from '@shared/utils/barangayCentroids'
+import ProjectMap from '@shared/components/ProjectMap'
 
 const inputClass =
   'w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500'
@@ -179,11 +181,11 @@ export default function ProjectForm() {
     const officesData = await loadOffices()
 
     if (isNew) {
-      // Default the implementing office to Engineering — MPDC plans/creates
-      // the project, but Engineering is who it gets assigned to for
-      // implementation, so that's the sensible default rather than MPDC's
-      // own office. Still a normal editable field if that ever needs to
-      // differ.
+      // Implementing office is always Engineering — MPDC plans/creates the
+      // project, but Engineering is who actually builds/monitors it, and
+      // no other office ever implements one in this system. Not an
+      // editable field (see the read-only display in the form below); this
+      // is the only place office_id is ever set.
       const engineeringOffice = officesData.find((o) => o.code === 'ENGG')
       const draft = readDraft('new')
       if (draft) {
@@ -212,6 +214,12 @@ export default function ProjectForm() {
     }
 
     setProject(data)
+    // Projects created before barangay-based auto-pin existed may have a
+    // barangay but no coordinates yet (latitude/longitude used to have no
+    // way of ever being set) — backfill from the centroid table so
+    // reopening one for edit shows the same auto-pin a new project gets,
+    // without requiring the barangay to be re-selected.
+    const centroid = data.barangay ? DONSOL_BARANGAY_CENTROIDS[data.barangay] : null
     const loadedForm = {
       title: data.title ?? '',
       description: data.description ?? '',
@@ -219,8 +227,8 @@ export default function ProjectForm() {
       sector: data.sector ?? '',
       barangay: data.barangay ?? '',
       location_text: data.location_text ?? '',
-      latitude: data.latitude ?? '',
-      longitude: data.longitude ?? '',
+      latitude: data.latitude ?? centroid?.lat ?? '',
+      longitude: data.longitude ?? centroid?.lng ?? '',
       estimated_cost: data.estimated_cost ?? '',
       start_date_planned: data.start_date_planned ?? '',
       end_date_planned: data.end_date_planned ?? '',
@@ -284,6 +292,21 @@ export default function ProjectForm() {
 
   function updateField(field, value) {
     setForm((current) => ({ ...current, [field]: value }))
+  }
+
+  // The only way latitude/longitude ever get set — always derived from the
+  // chosen barangay's centroid (see barangayCentroids.js), never typed or
+  // dragged by hand. Barangay-level precision only: every project in the
+  // same barangay resolves to the same point, since no purok-level
+  // coordinate data exists to place it any more precisely than that.
+  function selectBarangay(barangay) {
+    const centroid = DONSOL_BARANGAY_CENTROIDS[barangay]
+    setForm((current) => ({
+      ...current,
+      barangay,
+      latitude: centroid?.lat ?? '',
+      longitude: centroid?.lng ?? '',
+    }))
   }
 
   function getMissingFields() {
@@ -616,6 +639,20 @@ export default function ProjectForm() {
             </div>
 
             <div>
+              <p className="mb-1 block text-sm font-medium text-slate-700">Region</p>
+              <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500">
+                Bicol Region (Region V)
+              </p>
+            </div>
+
+            <div>
+              <p className="mb-1 block text-sm font-medium text-slate-700">Municipality</p>
+              <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500">
+                Donsol, Sorsogon
+              </p>
+            </div>
+
+            <div>
               <label htmlFor="barangay" className="mb-1 block text-sm font-medium text-slate-700">
                 Barangay *
               </label>
@@ -640,7 +677,7 @@ export default function ProjectForm() {
                         key={barangay}
                         type="button"
                         onClick={() => {
-                          updateField('barangay', barangay)
+                          selectBarangay(barangay)
                           barangayPopover.close()
                           barangayTriggerRef.current?.blur()
                         }}
@@ -662,12 +699,34 @@ export default function ProjectForm() {
               </label>
               <input
                 id="location_text"
-                placeholder="Site address / landmark"
+                placeholder="Purok / sitio / landmark"
                 value={form.location_text}
                 onChange={(event) => updateField('location_text', event.target.value)}
                 className={inputClass}
               />
             </div>
+
+            {form.latitude !== '' && form.longitude !== '' ? (
+              <div className="sm:col-span-2">
+                <p className="mb-1 block text-sm font-medium text-slate-700">Location Preview</p>
+                <p className="mb-2 text-xs text-slate-400">
+                  Pinned automatically at Barangay {form.barangay}'s location — not editable directly. Use the
+                  Location field above for the specific purok/sitio/landmark.
+                </p>
+                <ProjectMap
+                  projects={[
+                    {
+                      id: 'preview',
+                      title: form.title || 'This project',
+                      status: 'DRAFT',
+                      latitude: form.latitude,
+                      longitude: form.longitude,
+                    },
+                  ]}
+                  height="220px"
+                />
+              </div>
+            ) : null}
 
             <div>
               <label htmlFor="estimated_cost" className="mb-1 block text-sm font-medium text-slate-700">
@@ -682,26 +741,10 @@ export default function ProjectForm() {
             </div>
 
             <div>
-              <label htmlFor="office_id" className="mb-1 block text-sm font-medium text-slate-700">
-                Implementing Office *
-              </label>
-              <select
-                id="office_id"
-                value={form.office_id}
-                onChange={(event) => updateField('office_id', event.target.value)}
-                className={inputClass}
-                disabled={!isNew}
-              >
-                <option value="">Select an office</option>
-                {offices.map((office) => (
-                  <option key={office.id} value={office.id}>
-                    {office.name}
-                  </option>
-                ))}
-              </select>
-              {!isNew ? (
-                <p className="mt-1 text-xs text-slate-400">Set once at creation and can't be changed.</p>
-              ) : null}
+              <p className="mb-1 block text-sm font-medium text-slate-700">Implementing Office</p>
+              <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500">
+                {offices.find((office) => office.id === form.office_id)?.name ?? 'Engineering Office'}
+              </p>
             </div>
 
             <div>
@@ -839,7 +882,10 @@ function SubmitForReviewModal({ open, notes, onNotesChange, onCancel, onConfirm,
   if (!open) return null
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+    // z-1100: same reasoning as ConfirmDialog.jsx — stays above Leaflet's
+    // internal max (z-index:1000) so this never renders behind this page's
+    // own inline Location Preview map.
+    <div className="fixed inset-0 z-1100 flex items-center justify-center px-4">
       <button
         type="button"
         aria-label="Dismiss dialog"

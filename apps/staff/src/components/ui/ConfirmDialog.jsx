@@ -35,7 +35,12 @@ export default function ConfirmDialog({
   if (!open) return null
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+    // z-[1100]: comfortably above Leaflet's own internal max (its zoom
+    // controls/attribution panes go up to z-index:1000 — see
+    // ProjectMap.jsx), so this dialog can never render behind a map shown
+    // inline elsewhere on the same page (e.g. ProjectForm's Location
+    // Preview) regardless of DOM/stacking-context quirks.
+    <div className="fixed inset-0 z-1100 flex items-center justify-center px-4">
       <button
         type="button"
         aria-label="Dismiss dialog"
