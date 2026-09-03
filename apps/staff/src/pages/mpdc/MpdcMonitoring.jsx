@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Activity } from 'lucide-react'
+import { useSearchParams } from 'react-router-dom'
+import { Activity, X } from 'lucide-react'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
 import PageHeader from '../../components/ui/PageHeader'
@@ -21,22 +22,30 @@ import { DSS_DECISION_LABELS, getDssSeverityTone } from '@shared/utils/decisionS
 // Project Review instead).
 export default function MpdcMonitoring() {
   const toast = useToast()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [projects, setProjects] = useState([])
   const [loading, setLoading] = useState(true)
+  const statusFilter = searchParams.get('status') ?? ''
 
   async function loadProjects() {
     setLoading(true)
 
-    const { data: projectRows, error: projectsError } = await supabase
+    let query = supabase
       .from('projects')
       .select(
         `id, project_code, title, status, end_date_planned, dss_decision, dss_severity,
          offices(name),
          creator:profiles!projects_created_by_fkey(full_name)`,
       )
-      .in('status', MONITORING_VISIBLE_STATUSES)
       .order('status', { ascending: true })
       .order('end_date_planned', { ascending: true })
+
+    // A dashboard tile links here with a specific status (already known to
+    // be one of MONITORING_VISIBLE_STATUSES); with no filter, show the full
+    // monitored set as before.
+    query = statusFilter ? query.eq('status', statusFilter) : query.in('status', MONITORING_VISIBLE_STATUSES)
+
+    const { data: projectRows, error: projectsError } = await query
 
     if (projectsError) {
       toast.error('Could not load projects', projectsError.message)
@@ -86,13 +95,25 @@ export default function MpdcMonitoring() {
 
   useEffect(() => {
     loadProjects()
-  }, [])
+  }, [statusFilter])
 
   return (
     <div>
       <PageHeader
         title="Monitoring"
         description="Track implementation progress on approved projects, reported by Engineering."
+        actions={
+          statusFilter ? (
+            <button
+              type="button"
+              onClick={() => setSearchParams(new URLSearchParams())}
+              className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"
+            >
+              {PROJECT_STATUS_LABELS[statusFilter] ?? statusFilter}
+              <X className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+          ) : undefined
+        }
         breadcrumbs={[{ label: 'Dashboard', to: '/mpdc' }, { label: 'Monitoring' }]}
       />
 

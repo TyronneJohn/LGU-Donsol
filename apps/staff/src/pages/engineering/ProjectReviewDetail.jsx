@@ -5,6 +5,7 @@ import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
 import { useConfirm } from '../../hooks/useConfirm'
 import { useAuth } from '../../hooks/useAuth'
+import { useFormDraft, readDraft, clearDraft } from '../../hooks/useFormDraft'
 import PageHeader from '../../components/ui/PageHeader'
 import Button from '../../components/ui/Button'
 import CurrencyInput from '../../components/ui/CurrencyInput'
@@ -93,6 +94,26 @@ export default function ProjectReviewDetail() {
   const [docForm, setDocForm] = useState({ title: '', files: [] })
   const [docInputKey, setDocInputKey] = useState(0)
   const [uploading, setUploading] = useState(false)
+
+  // Unsaved review input survives a refresh or anything that unmounts this
+  // page. The budget fields are drafted against the project's saved values;
+  // the decision remarks against an empty box, keyed per decision type so
+  // switching between Return and Reject doesn't mix them up.
+  //
+  // docForm is deliberately left out: its `files` are File handles from a
+  // picker, which cannot be serialised or re-attached, and a half-filled
+  // document title alone isn't worth restoring against a file input that
+  // would come back empty.
+  const fieldsDraftKey = project ? `project-review-fields:${projectId}` : null
+  useFormDraft(
+    fieldsDraftKey,
+    fieldsForm,
+    { approved_budget: project?.approved_budget ?? '', funding_source: project?.funding_source ?? '' },
+    Boolean(project),
+  )
+
+  const remarksDraftKey = actionType ? `project-review-remarks:${projectId}:${actionType}` : null
+  useFormDraft(remarksDraftKey, remarks, '', Boolean(actionType))
 
   async function loadDocuments(id) {
     const { data, error } = await supabase
@@ -188,10 +209,17 @@ export default function ProjectReviewDetail() {
     }
 
     setProject(projectResult.data)
-    setFieldsForm({
-      approved_budget: projectResult.data.approved_budget ?? '',
-      funding_source: projectResult.data.funding_source ?? '',
-    })
+    // A restored draft means an edit was in progress, so reopen the fields
+    // for editing too — otherwise the recovered values would sit behind a
+    // read-only panel with no sign they're there.
+    const fieldsDraft = readDraft(`project-review-fields:${projectId}`)
+    setFieldsForm(
+      fieldsDraft ?? {
+        approved_budget: projectResult.data.approved_budget ?? '',
+        funding_source: projectResult.data.funding_source ?? '',
+      },
+    )
+    if (fieldsDraft) setEditingBudgetFields(true)
 
     if (submissionResult.error) {
       toast.error('Could not load submission details', submissionResult.error.message)
@@ -209,10 +237,11 @@ export default function ProjectReviewDetail() {
 
   function startDecision(type) {
     setActionType(type)
-    setRemarks('')
+    setRemarks(readDraft(`project-review-remarks:${projectId}:${type}`) ?? '')
   }
 
   function cancelDecision() {
+    clearDraft(remarksDraftKey)
     setActionType(null)
     setRemarks('')
   }
@@ -273,6 +302,7 @@ export default function ProjectReviewDetail() {
 
     await sendDecisionNotification(actionType, trimmedRemarks)
 
+    clearDraft(remarksDraftKey)
     setSubmitting(false)
     toast.success('Decision recorded', config.successMessage)
     navigate('/engineering/review')
@@ -317,11 +347,13 @@ export default function ProjectReviewDetail() {
       if (notifyError) toast.error('Saved, but could not notify MPDC', notifyError.message)
     }
 
+    clearDraft(fieldsDraftKey)
     toast.success('Changes saved')
     navigate('/engineering/review')
   }
 
   function handleCancelEditFields() {
+    clearDraft(fieldsDraftKey)
     setFieldsForm({
       approved_budget: project.approved_budget ?? '',
       funding_source: project.funding_source ?? '',

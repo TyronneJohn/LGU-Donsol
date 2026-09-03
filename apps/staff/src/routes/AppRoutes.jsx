@@ -1,5 +1,4 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
-import { ClipboardList } from 'lucide-react'
 
 import AdminLayout from '../layouts/AdminLayout'
 import MpdcLayout from '../layouts/MpdcLayout'
@@ -11,7 +10,6 @@ import Login from '../pages/Login'
 import ResetPassword from '../pages/ResetPassword'
 import Unauthorized from '../pages/Unauthorized'
 import NotFound from '../pages/NotFound'
-import ComingSoon from '../pages/shared/ComingSoon'
 import Messaging from '../pages/shared/Messaging'
 
 import AdminDashboard from '../pages/admin/AdminDashboard'
@@ -21,6 +19,7 @@ import AdminProjects from '../pages/admin/AdminProjects'
 import AdminProjectDetail from '../pages/admin/AdminProjectDetail'
 import AuditLog from '../pages/admin/AuditLog'
 import MpdcDashboard from '../pages/mpdc/MpdcDashboard'
+import AllProjects from '../pages/mpdc/AllProjects'
 import MpdcMonitoring from '../pages/mpdc/MpdcMonitoring'
 import MpdcProjectMonitoringDetail from '../pages/mpdc/MpdcProjectMonitoringDetail'
 import MyProjects from '../pages/mpdc/MyProjects'
@@ -74,6 +73,7 @@ export default function AppRoutes() {
         }
       >
         <Route index element={<MpdcDashboard />} />
+        <Route path="all-projects" element={<AllProjects />} />
         <Route path="projects" element={<MyProjects />} />
         <Route path="projects/new" element={<ProjectForm />} />
         <Route path="projects/:projectId" element={<ProjectForm />} />
@@ -113,17 +113,6 @@ export default function AppRoutes() {
         <Route path="contractors" element={<BacContractors />} />
         <Route path="contractors/:contractorId" element={<BacContractorDetail />} />
         <Route path="messaging" element={<Messaging />} />
-        <Route
-          path="accomplishments"
-          element={
-            <ComingSoon
-              title="Accomplishments"
-              description="Contractor billing and accomplishment submissions."
-              icon={ClipboardList}
-              breadcrumbs={[{ label: 'Dashboard', to: '/bac' }, { label: 'Accomplishments' }]}
-            />
-          }
-        />
       </Route>
 
       <Route path="*" element={<NotFound />} />

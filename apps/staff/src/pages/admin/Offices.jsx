@@ -3,6 +3,7 @@ import { Landmark, Pencil, Plus, Trash2 } from 'lucide-react'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
 import { useConfirm } from '../../hooks/useConfirm'
+import { useFormDraft, readDraft, clearDraft } from '../../hooks/useFormDraft'
 import PageHeader from '../../components/ui/PageHeader'
 import Button from '../../components/ui/Button'
 import { LoadingState } from '@shared/components/ui/LoadingState'
@@ -22,6 +23,13 @@ export default function Offices() {
   const [editingId, setEditingId] = useState(null)
   const [form, setForm] = useState(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
+
+  // Unsaved input survives a refresh or anything that unmounts this page —
+  // keyed per office so an edit in progress on one never bleeds into another.
+  // Only live while the form is actually open.
+  const [cleanForm, setCleanForm] = useState(EMPTY_FORM)
+  const draftKey = formOpen ? `office:${editingId ?? 'new'}` : null
+  useFormDraft(draftKey, form, cleanForm, formOpen)
 
   async function loadOffices() {
     setLoading(true)
@@ -45,19 +53,26 @@ export default function Offices() {
 
   function openAddForm() {
     setEditingId(null)
-    setForm(EMPTY_FORM)
+    setCleanForm(EMPTY_FORM)
+    setForm(readDraft('office:new') ?? EMPTY_FORM)
     setFormOpen(true)
   }
 
   function openEditForm(office) {
+    const clean = { code: office.code, name: office.name, description: office.description ?? '' }
     setEditingId(office.id)
-    setForm({ code: office.code, name: office.name, description: office.description ?? '' })
+    setCleanForm(clean)
+    setForm(readDraft(`office:${office.id}`) ?? clean)
     setFormOpen(true)
   }
 
+  // Closing is the explicit discard — it's reached both by Cancel and by a
+  // successful save, and neither leaves anything worth restoring.
   function closeForm() {
+    clearDraft(`office:${editingId ?? 'new'}`)
     setFormOpen(false)
     setEditingId(null)
+    setCleanForm(EMPTY_FORM)
     setForm(EMPTY_FORM)
   }
 

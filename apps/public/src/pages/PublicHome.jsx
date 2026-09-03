@@ -1,11 +1,15 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowRight, FolderKanban, MapPin, PhilippinePeso } from 'lucide-react'
+import { ArrowRight, CheckCircle2, FolderKanban, HardHat, PhilippinePeso } from 'lucide-react'
 import { supabase } from '@shared/lib/supabaseClient'
 import { formatCurrency } from '@shared/utils/format'
-import { PROJECT_STATUS_LABELS, PROJECT_STATUS_TONES } from '@shared/utils/projectStatus'
-import Badge from '@shared/components/ui/Badge'
 import { LoadingState } from '@shared/components/ui/LoadingState'
+
+const TILE_TONES = {
+  blue: 'bg-blue-50 text-blue-600 ring-blue-100',
+  emerald: 'bg-emerald-50 text-emerald-600 ring-emerald-100',
+  gold: 'bg-gold-50 text-gold-600 ring-gold-100',
+}
 
 export default function PublicHome() {
   const [projects, setProjects] = useState([])
@@ -28,9 +32,10 @@ export default function PublicHome() {
   const completedCount = projects.filter((p) => p.status === 'COMPLETED').length
 
   const stats = [
-    { icon: FolderKanban, label: 'Published Projects', value: projects.length },
-    { icon: MapPin, label: 'Ongoing', value: ongoingCount },
-    { icon: PhilippinePeso, label: 'Total Budget', value: formatCurrency(totalBudget) },
+    { icon: FolderKanban, label: 'Published Projects', value: projects.length, tone: 'blue' },
+    { icon: HardHat, label: 'Ongoing', value: ongoingCount, tone: 'gold' },
+    { icon: CheckCircle2, label: 'Completed', value: completedCount, tone: 'emerald' },
+    { icon: PhilippinePeso, label: 'Total Budget', value: formatCurrency(totalBudget), tone: 'blue' },
   ]
 
   return (
@@ -63,14 +68,16 @@ export default function PublicHome() {
             Public project listings will appear here once the monitoring system is populated.
           </p>
         ) : (
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {stats.map((stat) => (
               <div
                 key={stat.label}
-                className="flex items-center gap-4 rounded-xl border border-slate-200/70 bg-white p-5 shadow-sm shadow-slate-200/60"
+                className="flex items-center gap-4 rounded-xl border border-slate-200/70 bg-white p-5 shadow-sm shadow-slate-200/60 transition-shadow hover:shadow-md"
               >
-                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-blue-50 ring-1 ring-inset ring-blue-100">
-                  <stat.icon className="h-5 w-5 text-blue-600" aria-hidden="true" />
+                <span
+                  className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full ring-1 ring-inset ${TILE_TONES[stat.tone]}`}
+                >
+                  <stat.icon className="h-5 w-5" aria-hidden="true" />
                 </span>
                 <div>
                   <p className="text-lg font-semibold text-slate-800">{stat.value}</p>
@@ -80,14 +87,6 @@ export default function PublicHome() {
             ))}
           </div>
         )}
-
-        {!loading && completedCount > 0 ? (
-          <div className="mt-4 flex justify-center">
-            <Badge tone={PROJECT_STATUS_TONES.COMPLETED}>
-              {completedCount} {PROJECT_STATUS_LABELS.COMPLETED.toLowerCase()}
-            </Badge>
-          </div>
-        ) : null}
       </section>
     </div>
   )

@@ -85,6 +85,21 @@ function validateAiResult(candidate: unknown): AiResult | null {
   }
 }
 
+// responseMimeType: 'application/json' is supposed to make this unnecessary,
+// but a model that wraps its object in a markdown fence, or puts a stray line
+// either side of it, would otherwise fail the parse outright over formatting
+// rather than content.
+function stripJsonWrapper(text: string): string {
+  const unfenced = text
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/, '')
+  const start = unfenced.indexOf('{')
+  const end = unfenced.lastIndexOf('}')
+  if (start === -1 || end === -1 || end <= start) return unfenced
+  return unfenced.slice(start, end + 1)
+}
+
 // Sniffs the actual downloaded bytes — the browser-supplied MIME type is
 // never trusted for this decision. Returns null for anything unrecognized.
 function detectImageMimeType(bytes: Uint8Array): string | null {
@@ -286,7 +301,11 @@ Deno.serve(async (req) => {
           ],
           generationConfig: {
             temperature: 0.2,
-            maxOutputTokens: 1024,
+            // The analysis itself is short, but this ceiling is shared with
+            // whatever reasoning the model does before emitting it — at 1024
+            // a thinking model can spend the budget and get cut off partway
+            // through the JSON, which arrives here as a parse failure.
+            maxOutputTokens: 4096,
             responseMimeType: 'application/json',
             responseSchema: {
               type: 'OBJECT',
@@ -346,16 +365,36 @@ Deno.serve(async (req) => {
       return await markFailed(admin, imageId, 'The image was blocked by Gemini safety filters and could not be analyzed.')
     }
 
-    const rawText = candidate?.content?.parts?.[0]?.text
-    if (typeof rawText !== 'string' || rawText.trim().length === 0) {
+    // The answer is not reliably parts[0]: these models reason before they
+    // answer, and a reasoning/thought part can be emitted ahead of the JSON.
+    // Reading only the first part then hands JSON.parse a chunk of prose.
+    // Join every non-thought text part instead.
+    const parts = Array.isArray(candidate?.content?.parts) ? candidate.content.parts : []
+    const rawText = parts
+      .filter((part: Record<string, unknown>) => part?.thought !== true && typeof part?.text === 'string')
+      .map((part: Record<string, unknown>) => part.text as string)
+      .join('')
+
+    if (rawText.trim().length === 0) {
       return await markFailed(admin, imageId, 'Gemini returned an empty analysis.')
+    }
+
+    // A response cut off at the token ceiling is truncated mid-object, which
+    // is a parse failure with a completely different fix (raise the ceiling)
+    // than actually malformed output — worth saying so rather than lumping
+    // the two together.
+    if (candidate?.finishReason === 'MAX_TOKENS') {
+      return await markFailed(admin, imageId, 'Gemini ran out of output tokens before it finished the analysis.')
     }
 
     let parsed: unknown
     try {
-      parsed = JSON.parse(rawText)
+      parsed = JSON.parse(stripJsonWrapper(rawText))
     } catch {
-      return await markFailed(admin, imageId, 'Gemini returned malformed JSON.')
+      // Carry an excerpt of what actually came back. Without it, the next
+      // occurrence of this is exactly as undiagnosable as the first one was.
+      const excerpt = rawText.trim().slice(0, 200).replace(/\s+/g, ' ')
+      return await markFailed(admin, imageId, `Gemini returned malformed JSON. Response began: ${excerpt}`)
     }
 
     const validated = validateAiResult(parsed)

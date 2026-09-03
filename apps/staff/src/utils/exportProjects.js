@@ -1,102 +1,298 @@
-import * as XLSX from 'xlsx'
-import { PROJECT_STATUS_LABELS, PROCUREMENT_STATUS_LABELS } from '@shared/utils/projectStatus'
+import ExcelJS from 'exceljs'
+import { PROJECT_STATUS_LABELS, SECTOR_LABELS, SECTOR_ORDER } from '@shared/utils/projectStatus'
 
-// Column order matches the requested report columns exactly. Every value is
-// either a real projects column or a simple join already present in the
-// schema (procurement/contractor/progress/latest monitoring date) — nothing
-// invented. Callers pass already-merged, flat rows (see MpdcDashboard.jsx
-// for how those rows are built from projects + project_updates +
-// procurement).
-const COLUMNS = [
-  { header: 'Project Code', key: 'project_code', type: 'text', wch: 14 },
-  { header: 'Project Title', key: 'title', type: 'text', wch: 32 },
-  { header: 'Description', key: 'description', type: 'text', wch: 40 },
-  { header: 'Project Type', key: 'project_category', type: 'text', wch: 18 },
-  { header: 'Implementing Office', key: 'office_name', type: 'text', wch: 22 },
-  { header: 'Barangay', key: 'barangay', type: 'text', wch: 16 },
-  { header: 'Location', key: 'location_text', type: 'text', wch: 26 },
-  { header: 'Latitude', key: 'latitude', type: 'number', wch: 11 },
-  { header: 'Longitude', key: 'longitude', type: 'number', wch: 11 },
-  { header: 'Budget / ABC (PHP)', key: 'budget', type: 'currency', wch: 16 },
-  { header: 'Funding Source', key: 'funding_source', type: 'text', wch: 20 },
-  { header: 'Planned Start Date', key: 'start_date_planned', type: 'date', wch: 15 },
-  { header: 'Planned End Date', key: 'end_date_planned', type: 'date', wch: 15 },
-  { header: 'Actual Start Date', key: 'start_date_actual', type: 'date', wch: 15 },
-  { header: 'Actual End Date', key: 'end_date_actual', type: 'date', wch: 15 },
-  { header: 'Project Status', key: 'status_label', type: 'text', wch: 18 },
-  { header: 'Procurement Status', key: 'procurement_status_label', type: 'text', wch: 18 },
-  { header: 'Contractor', key: 'contractor_name', type: 'text', wch: 22 },
-  { header: 'Progress %', key: 'progress_percentage', type: 'percent', wch: 11 },
-  { header: 'Latest Monitoring Date', key: 'latest_monitoring_date', type: 'date', wch: 18 },
-  { header: 'Created Date', key: 'created_at', type: 'date', wch: 14 },
-]
+// Reproduces the LGU Donsol MPDC physical/financial accomplishment report
+// format (per the reference workbook the professor supplied): a 2-row
+// header with "PROJECT STATUS" spanning two subcolumns, projects grouped
+// A/B/C by sector then by program/activity, and a totalled TOTAL row.
+// Only real project data is ever written here — see toExportRow for the
+// exact field mapping and which report columns are left blank because no
+// corresponding field exists in the schema (Total Cost Incurred to Date,
+// No. of Extensions).
 
-const NUMBER_FORMATS = {
-  currency: '"₱"#,##0',
-  percent: '0.0"%"',
-  date: 'yyyy-mm-dd',
+const SECTOR_PREFIXES = { SOCIAL_DEVELOPMENT: 'A', ECONOMIC_DEVELOPMENT: 'B', ENVIRONMENTAL_MANAGEMENT: 'C' }
+
+const CURRENCY_FORMAT = '_-"₱"* #,##0.00_-;-"₱"* #,##0.00_-;_-"₱"* "-"??_-;_-@_-'
+const ACCOUNTING_FORMAT = '_(* #,##0.00_);_(* (#,##0.00);_(* "-"??_);_(@_)'
+const PERCENT_FORMAT = '0.00%'
+const DATE_FORMAT = 'mmm d, yyyy'
+
+const THIN = { style: 'thin', color: { argb: 'FF000000' } }
+const ALL_BORDERS = { top: THIN, bottom: THIN, left: THIN, right: THIN }
+
+const COL_COUNT = 9 // A..I
+// Character widths for columns A, B, I — the wrapped-text columns whose
+// content determines a data row's height (kept in sync with sheet.columns
+// below, which uses the same widths).
+const WRAP_COL_WIDTHS = { 1: 40, 2: 26, 9: 30 }
+
+// Excel doesn't reliably auto-fit row heights for wrapped text on first
+// open in every viewer, so estimate one from the longest wrapped column
+// instead of leaving long titles/locations/remarks clipped.
+function estimateRowHeight(project) {
+  const lineEstimates = [
+    Math.ceil((project.title?.length || 0) / WRAP_COL_WIDTHS[1]),
+    Math.ceil((project.location?.length || 0) / WRAP_COL_WIDTHS[2]),
+    Math.ceil((project.remarks?.length || 0) / WRAP_COL_WIDTHS[9]),
+  ]
+  const lines = Math.max(1, ...lineEstimates)
+  return Math.min(150, Math.max(20, lines * 15))
 }
 
-function toCell(value, type) {
-  if (value === null || value === undefined || value === '') return { t: 's', v: '' }
+function borderRow(row) {
+  for (let c = 1; c <= COL_COUNT; c++) row.getCell(c).border = ALL_BORDERS
+}
 
-  if (type === 'number' || type === 'currency' || type === 'percent') {
-    const num = Number(value)
-    if (Number.isNaN(num)) return { t: 's', v: '' }
-    return { t: 'n', v: num, ...(NUMBER_FORMATS[type] ? { z: NUMBER_FORMATS[type] } : {}) }
+function buildHeader(sheet) {
+  const r1 = sheet.getRow(1)
+  const r2 = sheet.getRow(2)
+  r1.height = 30
+  r2.height = 30
+
+  const singleColHeaders = [
+    [1, 'Programs/Project/Activities'],
+    [2, 'LOCATION'],
+    [3, 'Total Cost'],
+    [4, 'Date Started'],
+    [5, 'Target Completion Date'],
+    [8, 'No. of Extensions, if any'],
+    [9, 'Remarks'],
+  ]
+  for (const [col, label] of singleColHeaders) {
+    sheet.mergeCells(1, col, 2, col)
+    r1.getCell(col).value = label
   }
 
-  if (type === 'date') {
-    const date = new Date(value)
-    if (Number.isNaN(date.getTime())) return { t: 's', v: '' }
-    return { t: 'd', v: date, z: NUMBER_FORMATS.date }
-  }
+  sheet.mergeCells(1, 6, 1, 7)
+  r1.getCell(6).value = 'PROJECT STATUS'
+  r2.getCell(6).value = '% of completion'
+  r2.getCell(7).value = 'Total Cost Incurred to Date'
 
-  return { t: 's', v: String(value) }
+  for (const row of [r1, r2]) {
+    for (let c = 1; c <= COL_COUNT; c++) {
+      const cell = row.getCell(c)
+      cell.font = { bold: true }
+      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }
+    }
+    borderRow(row)
+  }
+}
+
+function addSectorRow(sheet, label) {
+  const row = sheet.addRow([label])
+  row.getCell(1).alignment = { horizontal: 'left', vertical: 'middle', wrapText: true }
+  for (let c = 1; c <= COL_COUNT; c++) {
+    const cell = row.getCell(c)
+    cell.font = { bold: true }
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9EAD3' } }
+  }
+  borderRow(row)
+  return row
+}
+
+function addProgramRow(sheet, programLabel) {
+  const row = sheet.addRow([programLabel])
+  row.getCell(1).font = { bold: true }
+  row.getCell(1).alignment = { horizontal: 'left', vertical: 'middle', wrapText: true }
+  borderRow(row)
+  return row
+}
+
+function addProjectRow(sheet, project) {
+  const row = sheet.addRow([
+    project.title,
+    project.location,
+    project.total_cost,
+    project.date_started,
+    project.target_completion_date,
+    project.percent_complete,
+    project.cost_incurred_to_date,
+    project.extensions,
+    project.remarks,
+  ])
+
+  row.getCell(1).alignment = { horizontal: 'left', vertical: 'middle', wrapText: true }
+  row.getCell(2).alignment = { horizontal: 'left', vertical: 'middle', wrapText: true }
+  row.getCell(3).alignment = { horizontal: 'center', vertical: 'middle' }
+  row.getCell(3).numFmt = CURRENCY_FORMAT
+  row.getCell(4).alignment = { horizontal: 'center', vertical: 'middle' }
+  row.getCell(5).alignment = { horizontal: 'center', vertical: 'middle' }
+  row.getCell(6).alignment = { horizontal: 'center', vertical: 'middle' }
+  row.getCell(6).numFmt = PERCENT_FORMAT
+  row.getCell(7).alignment = { horizontal: 'center', vertical: 'middle' }
+  row.getCell(7).numFmt = ACCOUNTING_FORMAT
+  row.getCell(8).alignment = { horizontal: 'center', vertical: 'middle' }
+  row.getCell(9).alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }
+  row.getCell(9).font = { bold: true }
+
+  if (project.date_started instanceof Date) row.getCell(4).numFmt = DATE_FORMAT
+  if (project.target_completion_date instanceof Date) row.getCell(5).numFmt = DATE_FORMAT
+
+  row.height = estimateRowHeight(project)
+
+  borderRow(row)
+  return row
+}
+
+function addTotalRow(sheet, totalCostFormulaRange) {
+  const row = sheet.addRow(['', 'TOTAL', totalCostFormulaRange ? { formula: totalCostFormulaRange } : ''])
+  row.getCell(2).font = { bold: true }
+  row.getCell(2).alignment = { horizontal: 'center', vertical: 'middle' }
+  row.getCell(3).font = { bold: true }
+  row.getCell(3).numFmt = CURRENCY_FORMAT
+  row.getCell(3).alignment = { horizontal: 'center', vertical: 'middle' }
+  row.getCell(3).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF92D050' } }
+  borderRow(row)
+  return row
 }
 
 /**
- * Builds a genuine .xlsx workbook from already-fetched, flattened project
- * rows and triggers a browser download. Read-only — never touches the
- * database. Reused by every export entry point so there is exactly one
- * place that defines the report's columns and formatting.
+ * Builds the styled, sector-grouped LGU accomplishment report workbook from
+ * already-fetched, flattened project rows (see toExportRow). Pure — returns
+ * the ExcelJS workbook without touching the DOM, so it's usable from both
+ * the browser export flow below and from tests.
  */
-export function exportProjectsToExcel(rows, { filenamePrefix = 'project-report' } = {}) {
-  const headerRow = COLUMNS.map((col) => col.header)
-  const dataRows = rows.map((row) => COLUMNS.map((col) => toCell(row[col.key], col.type)))
+export function buildProjectReportWorkbook(rows, { quarterLabel, periodEnd } = {}) {
+  const workbook = new ExcelJS.Workbook()
+  workbook.creator = 'LGU Donsol Project Monitoring System'
+  workbook.created = new Date()
 
-  const worksheet = XLSX.utils.aoa_to_sheet([headerRow])
-  dataRows.forEach((cells, rowIndex) => {
-    cells.forEach((cell, colIndex) => {
-      const address = XLSX.utils.encode_cell({ r: rowIndex + 1, c: colIndex })
-      worksheet[address] = cell
-    })
+  const sheet = workbook.addWorksheet(quarterLabel || 'Report', {
+    pageSetup: {
+      orientation: 'landscape',
+      paperSize: 14,
+      fitToPage: true,
+      fitToWidth: 1,
+      fitToHeight: 0,
+      margins: { left: 0.25, right: 0.25, top: 0.75, bottom: 0.5, header: 0.3, footer: 0.3 },
+      printTitlesRow: '1:2',
+    },
   })
 
-  const lastRow = dataRows.length + 1
-  worksheet['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: Math.max(lastRow - 1, 0), c: COLUMNS.length - 1 } })
-  worksheet['!cols'] = COLUMNS.map((col) => ({ wch: col.wch }))
-  worksheet['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: 0, c: COLUMNS.length - 1 } }) }
+  const periodLine = periodEnd ? `as of ${periodEnd}` : ''
+  sheet.headerFooter = {
+    oddHeader: `&C&"-,Bold"&12&KFF0000PROJECT MONITORING REPORT&K01+000\n${periodLine}\nLGU-DONSOL, SORSOGON`,
+    oddFooter: '&RPage &P of &N',
+  }
 
-  const workbook = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Projects')
+  sheet.columns = [
+    { width: 40 },
+    { width: 26 },
+    { width: 17 },
+    { width: 13 },
+    { width: 16 },
+    { width: 11 },
+    { width: 18 },
+    { width: 11 },
+    { width: 30 },
+  ]
 
+  buildHeader(sheet)
+
+  const bySector = new Map()
+  for (const row of rows) {
+    const key = row.sector && SECTOR_LABELS[row.sector] ? row.sector : null
+    if (!bySector.has(key)) bySector.set(key, [])
+    bySector.get(key).push(row)
+  }
+
+  let firstDataRow = null
+  let lastDataRow = null
+
+  for (const sector of SECTOR_ORDER) {
+    const projects = bySector.get(sector)
+    if (!projects || projects.length === 0) continue
+
+    addSectorRow(sheet, `${SECTOR_PREFIXES[sector]}. ${SECTOR_LABELS[sector].toUpperCase()}`)
+
+    const byProgram = new Map()
+    for (const project of projects) {
+      const key = project.program || ''
+      if (!byProgram.has(key)) byProgram.set(key, [])
+      byProgram.get(key).push(project)
+    }
+
+    const programKeys = [...byProgram.keys()].sort((a, b) => a.localeCompare(b))
+    for (const programKey of programKeys) {
+      if (programKey) addProgramRow(sheet, programKey.toUpperCase())
+
+      const projectsInProgram = byProgram.get(programKey).sort((a, b) => a.title.localeCompare(b.title))
+      for (const project of projectsInProgram) {
+        const dataRow = addProjectRow(sheet, project)
+        if (firstDataRow === null) firstDataRow = dataRow.number
+        lastDataRow = dataRow.number
+      }
+    }
+  }
+
+  // Uncategorized projects (no matching sector) still get exported, never
+  // silently dropped, grouped under a clearly-labeled catch-all.
+  const uncategorized = bySector.get(null)
+  if (uncategorized && uncategorized.length > 0) {
+    addSectorRow(sheet, 'UNCATEGORIZED')
+    for (const project of uncategorized.sort((a, b) => a.title.localeCompare(b.title))) {
+      const dataRow = addProjectRow(sheet, project)
+      if (firstDataRow === null) firstDataRow = dataRow.number
+      lastDataRow = dataRow.number
+    }
+  }
+
+  const totalFormula = firstDataRow ? `SUM(C${firstDataRow}:C${lastDataRow})` : null
+  addTotalRow(sheet, totalFormula)
+
+  sheet.pageSetup.printArea = `A1:I${sheet.lastRow.number}`
+
+  return workbook
+}
+
+/**
+ * Builds the report workbook and triggers a browser download. Read-only —
+ * never touches the database.
+ */
+export async function exportProjectsToExcel(rows, { quarterLabel, periodEnd, filenamePrefix = 'LGU-Donsol-Project-Report' } = {}) {
+  const workbook = buildProjectReportWorkbook(rows, { quarterLabel, periodEnd })
+
+  const buffer = await workbook.xlsx.writeBuffer()
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
   const dateStamp = new Date().toISOString().slice(0, 10)
-  XLSX.writeFile(workbook, `${filenamePrefix}-${dateStamp}.xlsx`)
+  link.href = url
+  link.download = `${filenamePrefix}-${dateStamp}.xlsx`
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
+}
+
+function toDate(value) {
+  if (!value) return null
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? null : date
 }
 
 /**
  * Normalizes a raw Supabase project row (plus its joined progress/
  * procurement data) into the flat shape exportProjectsToExcel expects.
+ * Every value here traces back to an existing database column — fields the
+ * schema doesn't have (cost incurred to date, extension count) are left
+ * null so the report cell renders blank rather than a fabricated value.
  */
 export function toExportRow(project) {
+  const statusLabel = PROJECT_STATUS_LABELS[project.status] ?? project.status
+  const remarks = project.latest_issues ? `${statusLabel} — ${project.latest_issues}` : statusLabel
+
   return {
-    ...project,
-    office_name: project.offices?.name ?? '',
-    budget: project.approved_budget ?? project.estimated_cost,
-    status_label: PROJECT_STATUS_LABELS[project.status] ?? project.status,
-    procurement_status_label: project.procurement_status
-      ? (PROCUREMENT_STATUS_LABELS[project.procurement_status] ?? project.procurement_status)
-      : '',
+    sector: project.sector,
+    program: project.project_category || '',
+    title: project.title,
+    location: project.location_text || project.barangay || '',
+    total_cost: project.approved_budget ?? project.estimated_cost ?? null,
+    date_started: toDate(project.start_date_actual ?? project.start_date_planned),
+    target_completion_date: toDate(project.end_date_planned),
+    percent_complete: project.progress_percentage != null ? Number(project.progress_percentage) / 100 : null,
+    cost_incurred_to_date: null,
+    extensions: null,
+    remarks,
   }
 }

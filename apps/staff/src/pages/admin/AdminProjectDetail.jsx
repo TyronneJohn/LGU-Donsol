@@ -12,6 +12,7 @@ import EmptyState from '@shared/components/ui/EmptyState'
 import DssPanel from '../../components/ui/DssPanel'
 import LocationModal from '../../components/LocationModal'
 import SitePhotoGrid from '../../components/ui/SitePhotoGrid'
+import { analyzeProjectImage } from '../../utils/imageAnalysis'
 import { formatCurrency, formatDate, formatDateTime } from '@shared/utils/format'
 import { PROJECT_STATUS_LABELS, PROJECT_STATUS_TONES } from '@shared/utils/projectStatus'
 import { evaluateProjectDss } from '@shared/utils/decisionSupport'
@@ -54,6 +55,7 @@ export default function AdminProjectDetail() {
   const [updates, setUpdates] = useState([])
   const [images, setImages] = useState([])
   const [statusHistory, setStatusHistory] = useState([])
+  const [retryingImageId, setRetryingImageId] = useState(null)
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -174,6 +176,24 @@ export default function AdminProjectDetail() {
   useEffect(() => {
     loadData()
   }, [projectId])
+
+  // Admins can re-run a failed AI analysis too (analyze-project-image accepts
+  // the admin role for any image) — and an admin is usually the one who fixes
+  // the cause, e.g. configuring the API key, so being able to retry from here
+  // saves a round trip through Engineering. Reloads everything afterwards
+  // since this page has no images-only loader.
+  async function handleRetryAnalysis(imageId) {
+    setRetryingImageId(imageId)
+    const outcome = await analyzeProjectImage(imageId)
+    await loadData()
+    setRetryingImageId(null)
+
+    if (outcome?.status === 'PROCESSED') {
+      toast.success('AI analysis complete')
+      return
+    }
+    toast.error('AI analysis failed again', outcome?.result?.error ?? 'The photo itself is unaffected.')
+  }
 
   async function handleViewDocument(doc) {
     const { data, error } = await supabase.storage.from('project-documents').createSignedUrl(doc.storage_path, 300)
@@ -392,7 +412,11 @@ export default function AdminProjectDetail() {
             <p className="mt-3 text-sm text-slate-500">No site photos uploaded yet.</p>
           ) : (
             <div className="mt-4">
-              <SitePhotoGrid images={images} />
+              <SitePhotoGrid
+              images={images}
+              onRetryAnalysis={handleRetryAnalysis}
+              retryingImageId={retryingImageId}
+            />
             </div>
           )}
         </section>

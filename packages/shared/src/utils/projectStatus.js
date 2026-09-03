@@ -54,6 +54,17 @@ export const SITE_MONITORING_VISIBLE_STATUSES = ['FOR_IMPLEMENTATION', 'ONGOING'
 // opens once BAC has signed a contract (FOR_IMPLEMENTATION).
 export const MONITORING_EDITABLE_STATUSES = ['FOR_IMPLEMENTATION', 'ONGOING']
 
+// Mirrors the public.project_sector enum (20260824100000_project_sector.sql).
+// Order matters: this is the A/B/C grouping order used by MPDC's physical/
+// financial accomplishment report (see exportProjects.js).
+export const SECTOR_LABELS = {
+  SOCIAL_DEVELOPMENT: 'Social Development',
+  ECONOMIC_DEVELOPMENT: 'Economic Development',
+  ENVIRONMENTAL_MANAGEMENT: 'Environmental Management',
+}
+
+export const SECTOR_ORDER = ['SOCIAL_DEVELOPMENT', 'ECONOMIC_DEVELOPMENT', 'ENVIRONMENTAL_MANAGEMENT']
+
 // Mirrors the public.procurement_status enum.
 export const PROCUREMENT_STATUS_LABELS = {
   NOT_STARTED: 'Not Started',
@@ -76,17 +87,6 @@ export const PROCUREMENT_STATUS_TONES = {
 // Statuses in which BAC can open or continue procurement on a project.
 // Mirrors procurement_insert_bac's RLS check.
 export const PROCUREMENT_ELIGIBLE_STATUSES = ['APPROVED', 'FOR_PROCUREMENT']
-
-// Statuses relevant to BAC beyond just "can open procurement" — includes
-// FOR_IMPLEMENTATION/ONGOING/COMPLETED so BAC's Geo Mapping view keeps
-// showing a project it already procured, not just ones awaiting action.
-export const PROCUREMENT_RELEVANT_STATUSES = [
-  'APPROVED',
-  'FOR_PROCUREMENT',
-  'FOR_IMPLEMENTATION',
-  'ONGOING',
-  'COMPLETED',
-]
 
 // Mirrors the public.bid_status enum.
 export const BID_STATUS_LABELS = {

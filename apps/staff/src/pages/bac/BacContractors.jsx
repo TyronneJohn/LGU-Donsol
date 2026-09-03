@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Building2, Pencil, Plus, Search } from 'lucide-react'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
+import { useFormDraft, readDraft, clearDraft } from '../../hooks/useFormDraft'
 import PageHeader from '../../components/ui/PageHeader'
 import Button from '../../components/ui/Button'
 import { LoadingState } from '@shared/components/ui/LoadingState'
@@ -29,6 +30,12 @@ export default function BacContractors() {
   const [editingId, setEditingId] = useState(null)
   const [form, setForm] = useState(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
+
+  // Unsaved input survives a refresh or anything that unmounts this page —
+  // keyed per contractor, and only live while the form is open.
+  const [cleanForm, setCleanForm] = useState(EMPTY_FORM)
+  const draftKey = formOpen ? `contractor:${editingId ?? 'new'}` : null
+  useFormDraft(draftKey, form, cleanForm, formOpen)
 
   async function loadContractors() {
     setLoading(true)
@@ -63,26 +70,33 @@ export default function BacContractors() {
 
   function openAddForm() {
     setEditingId(null)
-    setForm(EMPTY_FORM)
+    setCleanForm(EMPTY_FORM)
+    setForm(readDraft('contractor:new') ?? EMPTY_FORM)
     setFormOpen(true)
   }
 
   function openEditForm(contractor) {
-    setEditingId(contractor.id)
-    setForm({
+    const clean = {
       name: contractor.name ?? '',
       business_address: contractor.business_address ?? '',
       contact_person: contractor.contact_person ?? '',
       contact_number: contractor.contact_number ?? '',
       email: contractor.email ?? '',
       license_number: contractor.license_number ?? '',
-    })
+    }
+    setEditingId(contractor.id)
+    setCleanForm(clean)
+    setForm(readDraft(`contractor:${contractor.id}`) ?? clean)
     setFormOpen(true)
   }
 
+  // Closing is the explicit discard — reached by Cancel and by a successful
+  // save alike, and neither leaves anything worth restoring.
   function closeForm() {
+    clearDraft(`contractor:${editingId ?? 'new'}`)
     setFormOpen(false)
     setEditingId(null)
+    setCleanForm(EMPTY_FORM)
     setForm(EMPTY_FORM)
   }
 

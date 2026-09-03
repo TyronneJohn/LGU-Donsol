@@ -5,6 +5,7 @@ import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
 import { useConfirm } from '../../hooks/useConfirm'
 import { useAuth } from '../../hooks/useAuth'
+import { useFormDraft, readDraft, clearDraft } from '../../hooks/useFormDraft'
 import PageHeader from '../../components/ui/PageHeader'
 import Button from '../../components/ui/Button'
 import CurrencyInput from '../../components/ui/CurrencyInput'
@@ -71,40 +72,13 @@ function computeDurationDays(noticeToProceedDate, expectedCompletionDate) {
   return diffDays > 0 ? diffDays : ''
 }
 
-// Per-browser convenience only — recovers unsaved typing in any of this
-// page's three forms (Start Procurement, Procurement Details, Contract)
-// across an accidental refresh/tab-close before "Save" has actually reached
-// the database. Never the source of truth: cleared the moment a real save
-// (or an explicit Cancel) happens, and a fresh browser/device simply won't
-// have it. Scoped per-projectId + per-form so the three forms on this one
-// page, and different projects, never collide.
-const DRAFT_STORAGE_PREFIX = 'lgu-donsol:bac-procurement-draft:'
-
-function readDraft(key) {
-  try {
-    const raw = localStorage.getItem(DRAFT_STORAGE_PREFIX + key)
-    return raw ? JSON.parse(raw) : null
-  } catch {
-    return null
-  }
-}
-
-function writeDraft(key, value) {
-  try {
-    localStorage.setItem(DRAFT_STORAGE_PREFIX + key, JSON.stringify(value))
-  } catch {
-    // Private browsing, storage disabled, or quota exceeded — losing the
-    // convenience draft is fine; it just behaves like before this existed.
-  }
-}
-
-function clearDraft(key) {
-  try {
-    localStorage.removeItem(DRAFT_STORAGE_PREFIX + key)
-  } catch {
-    // ignore
-  }
-}
+// This page's three forms (Start Procurement, Procurement Details, Contract)
+// each keep their own draft, scoped per-projectId + per-form so they never
+// collide with each other or with another project. The storage itself now
+// lives in hooks/useFormDraft.js, shared with every other form in the app.
+const startDraftKey = (projectId) => `bac-procurement-start:${projectId}`
+const editDraftKey = (projectId) => `bac-procurement-edit:${projectId}`
+const contractDraftKey = (projectId) => `bac-procurement-contract:${projectId}`
 
 function Field({ label, children }) {
   return (
@@ -128,7 +102,7 @@ export default function BacProcurementDetail() {
   const [contractors, setContractors] = useState([])
   const [documents, setDocuments] = useState([])
 
-  const [startForm, setStartForm] = useState(() => readDraft(`start:${projectId}`) ?? EMPTY_START_FORM)
+  const [startForm, setStartForm] = useState(() => readDraft(startDraftKey(projectId)) ?? EMPTY_START_FORM)
   const [starting, setStarting] = useState(false)
 
   const [editForm, setEditForm] = useState(EMPTY_START_FORM)
@@ -234,7 +208,7 @@ export default function BacProcurementDetail() {
     setProcurement(current)
 
     if (current) {
-      const editDraft = readDraft(`edit:${projectId}`)
+      const editDraft = readDraft(editDraftKey(projectId))
       setEditForm(
         editDraft ?? {
           mode_of_procurement: current.mode_of_procurement ?? '',
@@ -246,7 +220,7 @@ export default function BacProcurementDetail() {
 
       setAwardContractorId(current.contractor_id ?? '')
 
-      const contractDraft = readDraft(`contract:${projectId}`)
+      const contractDraft = readDraft(contractDraftKey(projectId))
       setContractForm(
         contractDraft ?? {
           contract_number: current.contract_number ?? '',
@@ -267,7 +241,7 @@ export default function BacProcurementDetail() {
       // number that already exists on the project. Still a normal editable
       // field if BAC has a reason to diverge from it. A restored draft
       // (the user's own prior edits) always wins over that default.
-      const startDraft = readDraft(`start:${projectId}`)
+      const startDraft = readDraft(startDraftKey(projectId))
       setStartForm(startDraft ?? { ...EMPTY_START_FORM, abc_amount: projectData.approved_budget ?? '' })
       setDocuments([])
     }
@@ -280,36 +254,57 @@ export default function BacProcurementDetail() {
     loadData()
   }, [projectId])
 
-  // Mirrors each form into localStorage so an accidental refresh/close
-  // doesn't lose unsaved typing — see readDraft/writeDraft above. Gated on
-  // `loading` so the brief loading state before loadData() finishes
-  // restoring never overwrites a real draft with blank values.
-  useEffect(() => {
-    if (loading) return
-    writeDraft(`start:${projectId}`, startForm)
-  }, [startForm, loading, projectId])
+  // Each form mirrors itself into storage while it holds anything not yet
+  // saved, so a refresh — or anything that unmounts this page — doesn't cost
+  // the user their typing. Gated on `loading` so the blank state before
+  // loadData() finishes restoring never overwrites a real draft.
+  //
+  // The clean value each is compared against is what the form would hold with
+  // nothing unsaved in it: the ABC default for a procurement not yet started,
+  // and the saved procurement row for the two that edit one. A form matching
+  // that stores nothing at all, which is also what keeps a blank draft from
+  // springing the edit panels open on the next load.
+  useFormDraft(
+    startDraftKey(projectId),
+    startForm,
+    { ...EMPTY_START_FORM, abc_amount: project?.approved_budget ?? '' },
+    !loading && !procurement,
+  )
 
-  useEffect(() => {
-    if (loading || !isEditingDetails) return
-    writeDraft(`edit:${projectId}`, editForm)
-  }, [editForm, loading, isEditingDetails, projectId])
+  useFormDraft(
+    editDraftKey(projectId),
+    editForm,
+    {
+      mode_of_procurement: procurement?.mode_of_procurement ?? '',
+      abc_amount: procurement?.abc_amount ?? '',
+      bid_opening_date: procurement?.bid_opening_date ?? '',
+    },
+    !loading && isEditingDetails,
+  )
 
   // Contract's form has no separate "start editing" gate the way Procurement
   // Details does — it's shown unconditionally the moment there's no saved
-  // contract yet (see hasSavedContract below), so gating this write purely
-  // on isEditingContract would miss every first-time entry. Recomputed
-  // inline from `procurement` rather than reusing the later `hasSavedContract`
+  // contract yet (see hasSavedContract below), so gating this purely on
+  // isEditingContract would miss every first-time entry. Recomputed inline
+  // from `procurement` rather than reusing the later `hasSavedContract`
   // const, since hooks must run before that declaration (after the
   // loading/notFound early returns) in source order.
-  useEffect(() => {
-    if (loading) return
-    const contractAlreadySaved = Boolean(
-      procurement?.contract_number || procurement?.contract_amount || procurement?.contract_signed_date,
-    )
-    if (!contractAlreadySaved || isEditingContract) {
-      writeDraft(`contract:${projectId}`, contractForm)
-    }
-  }, [contractForm, loading, isEditingContract, procurement, projectId])
+  const contractAlreadySaved = Boolean(
+    procurement?.contract_number || procurement?.contract_amount || procurement?.contract_signed_date,
+  )
+  useFormDraft(
+    contractDraftKey(projectId),
+    contractForm,
+    {
+      contract_number: procurement?.contract_number ?? '',
+      contract_amount: procurement?.contract_amount ?? '',
+      contract_signed_date: procurement?.contract_signed_date ?? '',
+      notice_to_proceed_date: procurement?.notice_to_proceed_date ?? '',
+      contract_duration_days: procurement?.contract_duration_days ?? '',
+      expected_completion_date: procurement?.expected_completion_date ?? '',
+    },
+    !loading && (!contractAlreadySaved || isEditingContract),
+  )
 
   async function handleStartProcurement(event) {
     event.preventDefault()
@@ -330,7 +325,7 @@ export default function BacProcurementDetail() {
     }
     toast.success('Procurement opened', 'The project has moved to For Procurement.')
     setStartForm(EMPTY_START_FORM)
-    clearDraft(`start:${projectId}`)
+    clearDraft(startDraftKey(projectId))
     loadData()
   }
 
@@ -354,7 +349,7 @@ export default function BacProcurementDetail() {
     }
     toast.success('Procurement details saved')
     setIsEditingDetails(false)
-    clearDraft(`edit:${projectId}`)
+    clearDraft(editDraftKey(projectId))
     loadData()
   }
 
@@ -367,7 +362,7 @@ export default function BacProcurementDetail() {
       })
     }
     setIsEditingDetails(false)
-    clearDraft(`edit:${projectId}`)
+    clearDraft(editDraftKey(projectId))
   }
 
   async function handleRecordAward() {
@@ -433,7 +428,7 @@ export default function BacProcurementDetail() {
       payload.status === 'CONTRACT_SIGNED' ? 'Project moved to For Implementation.' : undefined,
     )
     setIsEditingContract(false)
-    clearDraft(`contract:${projectId}`)
+    clearDraft(contractDraftKey(projectId))
     loadData()
   }
 
@@ -449,7 +444,7 @@ export default function BacProcurementDetail() {
       })
     }
     setIsEditingContract(false)
-    clearDraft(`contract:${projectId}`)
+    clearDraft(contractDraftKey(projectId))
   }
 
   async function handleMarkCompleted() {
@@ -546,9 +541,7 @@ export default function BacProcurementDetail() {
     )
   }
 
-  const hasSavedContract = Boolean(
-    procurement?.contract_number || procurement?.contract_amount || procurement?.contract_signed_date,
-  )
+  const hasSavedContract = contractAlreadySaved
   const canEditAward = !['CONTRACT_SIGNED', 'COMPLETED'].includes(procurement?.status)
 
   return (

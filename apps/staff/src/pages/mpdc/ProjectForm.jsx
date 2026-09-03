@@ -7,6 +7,7 @@ import { useToast } from '../../hooks/useToast'
 import { useConfirm } from '../../hooks/useConfirm'
 import { useAuth } from '../../hooks/useAuth'
 import { useDismissablePopover } from '../../hooks/useDismissablePopover'
+import { useFormDraft, readDraft, clearDraft, isSameDraft } from '../../hooks/useFormDraft'
 import PageHeader from '../../components/ui/PageHeader'
 import Button from '../../components/ui/Button'
 import CurrencyInput from '../../components/ui/CurrencyInput'
@@ -14,7 +15,7 @@ import Badge from '@shared/components/ui/Badge'
 import { LoadingState } from '@shared/components/ui/LoadingState'
 import EmptyState from '@shared/components/ui/EmptyState'
 import { formatCurrency, formatDateTime } from '@shared/utils/format'
-import { PROJECT_STATUS_LABELS, PROJECT_STATUS_TONES } from '@shared/utils/projectStatus'
+import { PROJECT_STATUS_LABELS, PROJECT_STATUS_TONES, SECTOR_LABELS } from '@shared/utils/projectStatus'
 import { DONSOL_BARANGAYS } from '@shared/utils/barangays'
 import { DONSOL_BARANGAY_CENTROIDS } from '@shared/utils/barangayCentroids'
 import ProjectMap from '@shared/components/ProjectMap'
@@ -22,12 +23,6 @@ import ProjectMap from '@shared/components/ProjectMap'
 const inputClass =
   'w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500'
 const textareaClass = inputClass
-
-const SECTOR_LABELS = {
-  SOCIAL_DEVELOPMENT: 'Social Development',
-  ECONOMIC_DEVELOPMENT: 'Economic Development',
-  ENVIRONMENTAL_MANAGEMENT: 'Environmental Management',
-}
 
 const EMPTY_FORM = {
   title: '',
@@ -60,36 +55,16 @@ const REQUIRED_FIELD_LABELS = {
   office_id: 'Implementing Office',
 }
 
-// Per-browser convenience only — recovers unsaved form input across an
-// accidental refresh/tab-close before "Save" has actually reached the
-// database. Never the source of truth: cleared the moment a real save
-// succeeds, and a fresh browser/device simply won't have it.
-const DRAFT_STORAGE_PREFIX = 'lgu-donsol:mpdc-project-draft:'
-
-function readDraft(key) {
-  try {
-    const raw = localStorage.getItem(DRAFT_STORAGE_PREFIX + key)
-    return raw ? JSON.parse(raw) : null
-  } catch {
-    return null
-  }
-}
-
-function writeDraft(key, value) {
-  try {
-    localStorage.setItem(DRAFT_STORAGE_PREFIX + key, JSON.stringify(value))
-  } catch {
-    // Private browsing, storage disabled, or quota exceeded — losing the
-    // convenience draft is fine; it just behaves like before this existed.
-  }
-}
-
-function clearDraft(key) {
-  try {
-    localStorage.removeItem(DRAFT_STORAGE_PREFIX + key)
-  } catch {
-    // ignore
-  }
+// Engineering is seeded with code 'ENGG' (20260811130000_seed_offices.sql).
+// The looser code/name matches only exist so a database whose offices were
+// created by hand instead of by that seed still resolves to the right office
+// rather than to no office at all.
+function findEngineeringOffice(offices) {
+  return (
+    offices.find((office) => office.code === 'ENGG') ??
+    offices.find((office) => office.code?.toUpperCase().startsWith('ENG')) ??
+    offices.find((office) => office.name?.toLowerCase().includes('engineering'))
+  )
 }
 
 export default function ProjectForm() {
@@ -118,6 +93,14 @@ export default function ProjectForm() {
 
   const barangayPopover = useDismissablePopover()
   const barangayTriggerRef = useRef(null)
+
+  // The form as it stands with nothing unsaved in it: blank (plus the
+  // implementing office) for a new project, the saved row's values for an
+  // existing one. Everything about the draft is relative to this — a draft
+  // is only worth keeping while `form` differs from it, and Cancel means
+  // going back to it.
+  const cleanFormRef = useRef(EMPTY_FORM)
+  const draftKey = `mpdc-project:${isNew ? 'new' : projectId}`
 
   async function loadOffices() {
     const { data, error } = await supabase.from('offices').select('id, code, name').order('name', { ascending: true })
@@ -186,13 +169,29 @@ export default function ProjectForm() {
       // no other office ever implements one in this system. Not an
       // editable field (see the read-only display in the form below); this
       // is the only place office_id is ever set.
-      const engineeringOffice = officesData.find((o) => o.code === 'ENGG')
-      const draft = readDraft('new')
-      if (draft) {
-        setForm(draft)
-      } else {
-        setForm((current) => ({ ...current, office_id: engineeringOffice?.id ?? officesData[0]?.id ?? '' }))
+      //
+      // Deliberately no "then just take the first office" fallback: the list
+      // is ordered by name, so index 0 is the Bids and Awards Committee, and
+      // a project silently stamped with BAC's office is invisible to
+      // Engineering (their pages and the review RLS both filter on
+      // office_id) and can never be corrected afterward, since
+      // guard_project_field_updates locks office_id once the row exists.
+      // Leaving it empty is the safe failure: the completeness check below
+      // then names it as missing instead.
+      const engineeringOffice = findEngineeringOffice(officesData)
+      if (!engineeringOffice) {
+        toast.error(
+          'Engineering Office not found',
+          'Ask an admin to add it to the offices list before creating a project.',
+        )
       }
+      // office_id is re-derived rather than restored from the draft: the
+      // draft exists to recover what the user typed, and this field is never
+      // typed — restoring it would let one bad value outlive the fix.
+      const clean = { ...EMPTY_FORM, office_id: engineeringOffice?.id ?? '' }
+      cleanFormRef.current = clean
+      const draft = readDraft(draftKey)
+      setForm(draft ? { ...draft, office_id: clean.office_id } : clean)
       setLoading(false)
       return
     }
@@ -234,12 +233,8 @@ export default function ProjectForm() {
       end_date_planned: data.end_date_planned ?? '',
       office_id: data.office_id ?? '',
     }
-    const draft = readDraft(data.id)
-    if (draft) {
-      setForm(draft)
-    } else {
-      setForm(loadedForm)
-    }
+    cleanFormRef.current = loadedForm
+    setForm(readDraft(draftKey) ?? loadedForm)
 
     await loadHistory(data.id)
     setLoading(false)
@@ -249,46 +244,30 @@ export default function ProjectForm() {
     loadProject()
   }, [projectId])
 
-  // Mirrors `form` into localStorage so an accidental refresh/close doesn't
-  // lose unsaved typing — see readDraft/writeDraft above. Gated on `loading`
-  // so the brief empty/loading state before loadProject() finishes restoring
-  // never overwrites a real draft with blank values.
-  useEffect(() => {
-    if (loading) return
-    writeDraft(isNew ? 'new' : projectId, form)
-  }, [form, loading, isNew, projectId])
+  // Keeps unsaved typing recoverable across anything that takes this
+  // component down without a save. The draft is deliberately NOT cleared on
+  // unmount — see useFormDraft.js for why that used to be here and why it
+  // destroyed exactly the input it was meant to protect.
+  useFormDraft(draftKey, form, cleanFormRef.current, !loading)
 
-  // Clears the draft when the user actually navigates away from this page
-  // in-app without saving (e.g. clicking "My Projects") — a real unmount,
-  // which React only runs for client-side route changes, never for a
-  // browser refresh/close (the JS runtime is torn down first, so this
-  // cleanup simply doesn't get a chance to run then). That's what keeps
-  // "survives a refresh" and "doesn't survive deliberately leaving the
-  // page" both true at once. draftKeyRef always holds the latest key (form
-  // state changes across renders, but this cleanup itself only ever runs
-  // once, on the actual unmount, so it needs the up-to-date key rather than
-  // whatever it closed over at mount).
-  const draftKeyRef = useRef(isNew ? 'new' : projectId)
-  useEffect(() => {
-    draftKeyRef.current = isNew ? 'new' : projectId
-  })
-  // The clear itself is deferred one tick and cancellable, purely to survive
-  // React StrictMode's dev-only mount→cleanup→remount replay of this same
-  // effect (refs/state persist across that replay, it's only the effect
-  // call that's doubled) — without this, every normal mount in dev would
-  // wipe the draft it had just restored, a tick before the "real" cleanup
-  // this is meant for ever gets a chance to matter.
-  const pendingClearRef = useRef(null)
-  useEffect(() => {
-    if (pendingClearRef.current) {
-      clearTimeout(pendingClearRef.current)
-      pendingClearRef.current = null
+  // Cancel: throw the unsaved input away and go back to the clean form.
+  function discardDraft() {
+    clearDraft(draftKey)
+    setForm(cleanFormRef.current)
+  }
+
+  async function handleCancel() {
+    if (!isSameDraft(form, cleanFormRef.current)) {
+      const confirmed = await confirm({
+        title: 'Discard unsaved changes?',
+        description: 'Anything typed here that has not been saved will be lost.',
+        confirmLabel: 'Discard',
+      })
+      if (!confirmed) return
     }
-    return () => {
-      const key = draftKeyRef.current
-      pendingClearRef.current = setTimeout(() => clearDraft(key), 0)
-    }
-  }, [])
+    discardDraft()
+    navigate('/mpdc/projects')
+  }
 
   function updateField(field, value) {
     setForm((current) => ({ ...current, [field]: value }))
@@ -368,7 +347,7 @@ export default function ProjectForm() {
         toast.error('Could not create project', error?.message ?? 'Unexpected error creating the project.')
         return
       }
-      clearDraft('new')
+      clearDraft(draftKey)
       toast.success('Draft created', 'You can now submit it for review when ready.')
       navigate('/mpdc/projects')
       return
@@ -383,7 +362,10 @@ export default function ProjectForm() {
       toast.error('Could not save changes', error.message)
       return
     }
-    clearDraft(project.id)
+    clearDraft(draftKey)
+    // The saved values are the clean state now, so nothing is left "unsaved"
+    // and the mirror below has nothing to re-write on the way out.
+    cleanFormRef.current = form
     toast.success('Changes saved')
     navigate('/mpdc/projects')
   }
@@ -745,6 +727,12 @@ export default function ProjectForm() {
               <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500">
                 {offices.find((office) => office.id === form.office_id)?.name ?? 'Engineering Office'}
               </p>
+              {isNew && !form.office_id ? (
+                <p className="mt-1 text-xs text-red-600">
+                  The Engineering Office is missing from the offices list — an admin has to add it before
+                  this project can be submitted.
+                </p>
+              ) : null}
             </div>
 
             <div>
@@ -776,7 +764,7 @@ export default function ProjectForm() {
 
           {editable ? (
             <div className="mt-5 flex flex-wrap items-center justify-end gap-2">
-              <Button variant="secondary" to="/mpdc/projects">
+              <Button variant="secondary" type="button" onClick={handleCancel}>
                 Cancel
               </Button>
               <Button type="submit" icon={Save} loading={saving}>

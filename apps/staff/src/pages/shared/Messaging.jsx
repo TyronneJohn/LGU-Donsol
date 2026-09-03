@@ -1,18 +1,26 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { ArrowLeft, FolderKanban, Paperclip, Search, Send, X } from 'lucide-react'
+import { ArrowLeft, ExternalLink, FolderKanban, Paperclip, Search, Send, X } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useAuth } from '../../hooks/useAuth'
 import { useToast } from '../../hooks/useToast'
 import { useDismissablePopover } from '../../hooks/useDismissablePopover'
+import { useFormDraft, readDraft } from '../../hooks/useFormDraft'
 import PageHeader from '../../components/ui/PageHeader'
+import Button from '../../components/ui/Button'
 import Badge from '@shared/components/ui/Badge'
 import { LoadingState, Spinner } from '@shared/components/ui/LoadingState'
 import EmptyState from '@shared/components/ui/EmptyState'
 import { ROLES, ROLE_LABELS, ROLE_HOME_PATH } from '../../utils/roles'
 import { formatCurrency, formatDate, formatRelativeTime } from '@shared/utils/format'
-import { PROJECT_STATUS_LABELS, PROJECT_STATUS_TONES } from '@shared/utils/projectStatus'
+import {
+  PROJECT_STATUS_LABELS,
+  PROJECT_STATUS_TONES,
+  MONITORING_VISIBLE_STATUSES,
+  SITE_MONITORING_VISIBLE_STATUSES,
+  PROCUREMENT_ELIGIBLE_STATUSES,
+} from '@shared/utils/projectStatus'
 
 const MESSAGE_SELECT = `
   id, body, project_id, sender_id, sender_role, recipient_role, is_read, read_at, created_at,
@@ -39,6 +47,21 @@ export default function Messaging() {
   })
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
+
+  // An unsent message is kept per thread, so switching offices (or losing
+  // the page to a refresh) doesn't throw away what was typed to either one.
+  // draftThreadRef marks which thread the text in `draft` currently belongs
+  // to: on the render where the selected thread changes, `draft` still holds
+  // the *previous* thread's text, and mirroring it then would overwrite the
+  // new thread's stored draft before the effect below has read it back.
+  const composerDraftKey = selectedRole ? `message:${role}:${selectedRole}` : null
+  const draftThreadRef = useRef(composerDraftKey)
+  useFormDraft(composerDraftKey, draft, '', draftThreadRef.current === composerDraftKey)
+
+  useEffect(() => {
+    draftThreadRef.current = composerDraftKey
+    setDraft(composerDraftKey ? (readDraft(composerDraftKey) ?? '') : '')
+  }, [composerDraftKey])
   const [attachedProject, setAttachedProject] = useState(null)
   const [projectPanel, setProjectPanel] = useState(null)
   const [projectPanelLoading, setProjectPanelLoading] = useState(false)
@@ -229,7 +252,7 @@ export default function Messaging() {
       .from('projects')
       .select(
         `id, project_code, title, description, project_category, barangay, location_text, status,
-         estimated_cost, approved_budget, funding_source,
+         estimated_cost, approved_budget, funding_source, created_by,
          start_date_planned, end_date_planned, start_date_actual, end_date_actual`,
       )
       .eq('id', projectId)
@@ -290,6 +313,8 @@ export default function Messaging() {
               project={projectPanel}
               loading={projectPanelLoading}
               onClose={() => setProjectPanel(null)}
+              role={role}
+              userId={user.id}
             />,
             document.body,
           )
@@ -567,7 +592,48 @@ function ProjectPicker({ onPick }) {
   )
 }
 
-function ProjectPanel({ project, loading, onClose }) {
+// Where the viewer can actually work on a project attached to a message.
+// The panel itself is read-only, so "Open" hands them off to the page their
+// own role uses for that project at that stage — Engineering's review queue
+// before a decision, Site Monitoring once it's being built, BAC's
+// procurement record, MPDC's own draft or the monitoring view.
+//
+// Returns null when this role has no page for the project in its current
+// status (Engineering can't open a project still in MPDC's drafts, say);
+// the button is then left out rather than pointing somewhere that would
+// greet the user with "Project not found".
+function projectDestination(role, project, userId) {
+  const id = project?.id
+  if (!id || !project?.status) return null
+
+  if (role === ROLES.ADMIN) return `/admin/projects/${id}`
+
+  if (role === ROLES.ENGINEERING) {
+    if (project.status === 'SUBMITTED_FOR_REVIEW') return `/engineering/review/${id}`
+    if (SITE_MONITORING_VISIBLE_STATUSES.includes(project.status)) return `/engineering/monitoring/${id}`
+    return null
+  }
+
+  if (role === ROLES.BAC) {
+    // Procurement's own record stays reachable after the award too, which is
+    // when the project has already moved on to the implementation statuses.
+    const bacReachable = [...PROCUREMENT_ELIGIBLE_STATUSES, ...SITE_MONITORING_VISIBLE_STATUSES]
+    return bacReachable.includes(project.status) ? `/bac/procurement/${id}` : null
+  }
+
+  if (role === ROLES.MPDC) {
+    if (MONITORING_VISIBLE_STATUSES.includes(project.status)) return `/mpdc/monitoring/${id}`
+    // Pre-approval, the only MPDC page for a project is its editor, and that
+    // one is scoped to the creator (ProjectForm bails out otherwise).
+    return project.created_by === userId ? `/mpdc/projects/${id}` : null
+  }
+
+  return null
+}
+
+function ProjectPanel({ project, loading, onClose, role, userId }) {
+  const destination = loading ? null : projectDestination(role, project, userId)
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
       <button type="button" aria-label="Dismiss dialog" onClick={onClose} className="fixed inset-0 bg-slate-900/50" />
@@ -621,6 +687,19 @@ function ProjectPanel({ project, loading, onClose }) {
               <PanelField label="Planned End">
                 {project.end_date_planned ? formatDate(project.end_date_planned) : null}
               </PanelField>
+            </div>
+
+            <div className="flex justify-end pt-1">
+              {destination ? (
+                <Button size="sm" icon={ExternalLink} to={destination} onClick={onClose}>
+                  Open Project
+                </Button>
+              ) : (
+                <p className="text-xs text-slate-400">
+                  This project isn&apos;t in your office&apos;s queue right now, so there&apos;s nothing to
+                  open — it&apos;s {(PROJECT_STATUS_LABELS[project.status] ?? project.status).toLowerCase()}.
+                </p>
+              )}
             </div>
           </div>
         )}

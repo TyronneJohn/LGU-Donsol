@@ -5,6 +5,7 @@ import { Camera, CameraOff, Clock, FileWarning, MapPin, Send, X } from 'lucide-r
 import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
 import { useAuth } from '../../hooks/useAuth'
+import { useFormDraft, readDraft } from '../../hooks/useFormDraft'
 import PageHeader from '../../components/ui/PageHeader'
 import Button from '../../components/ui/Button'
 import Badge from '@shared/components/ui/Badge'
@@ -151,7 +152,7 @@ function CameraCapture({ onCapture, onClose }) {
 // on-demand modal (same createPortal/backdrop pattern as LocationModal) so
 // the page stays short right after submitting an update, with history just
 // a click away instead of always taking up space.
-function MonitoringHistoryModal({ open, onClose, updates, imagesByUpdate }) {
+function MonitoringHistoryModal({ open, onClose, updates, imagesByUpdate, onRetryAnalysis, retryingImageId }) {
   useEffect(() => {
     if (!open) return undefined
 
@@ -220,7 +221,11 @@ function MonitoringHistoryModal({ open, onClose, updates, imagesByUpdate }) {
 
                   {(imagesByUpdate.get(entry.id) ?? []).length > 0 ? (
                     <div className="mt-3">
-                      <SitePhotoGrid images={imagesByUpdate.get(entry.id)} />
+                      <SitePhotoGrid
+                        images={imagesByUpdate.get(entry.id)}
+                        onRetryAnalysis={onRetryAnalysis}
+                        retryingImageId={retryingImageId}
+                      />
                     </div>
                   ) : null}
                 </li>
@@ -232,7 +237,11 @@ function MonitoringHistoryModal({ open, onClose, updates, imagesByUpdate }) {
             <div className="mt-6 border-t border-slate-100 pt-4">
               <h3 className="text-sm font-semibold text-slate-800">Other Site Photos</h3>
               <div className="mt-3">
-                <SitePhotoGrid images={unassignedImages} />
+                <SitePhotoGrid
+                  images={unassignedImages}
+                  onRetryAnalysis={onRetryAnalysis}
+                  retryingImageId={retryingImageId}
+                />
               </div>
             </div>
           ) : null}
@@ -256,10 +265,20 @@ export default function ProjectMonitoringDetail() {
   const [locationOpen, setLocationOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
 
-  const [form, setForm] = useState(EMPTY_FORM)
+  const draftKey = `monitoring-update:${projectId}`
+  const [form, setForm] = useState(() => readDraft(draftKey) ?? EMPTY_FORM)
   const [photoQueue, setPhotoQueue] = useState([])
   const [submitting, setSubmitting] = useState(false)
   const [cameraOpen, setCameraOpen] = useState(false)
+  const [retryingImageId, setRetryingImageId] = useState(null)
+
+  // A site report typed out on a phone in the field is exactly the input
+  // worth not losing to a backgrounded tab. Text fields only: photoQueue
+  // holds File handles from the camera/picker, which can't be serialised or
+  // re-attached, so the queued photos still have to be re-added after a
+  // reload. Submitting resets `form` to EMPTY_FORM, which matches the clean
+  // value here and so clears the stored draft on its own.
+  useFormDraft(draftKey, form, EMPTY_FORM)
 
   async function loadUpdates() {
     const { data, error } = await supabase
@@ -305,6 +324,24 @@ export default function ProjectMonitoringDetail() {
       }),
     )
     setImages(withUrls)
+  }
+
+  // Re-runs the AI analysis for one photo that failed. Same call the upload
+  // path makes, minus the fire-and-forget: here the user is waiting on it, so
+  // the outcome is reported and the grid reloaded to pick up the new status.
+  // The photo and its monitoring update are untouched either way — this only
+  // ever rewrites ai_analysis_status/ai_analysis_result.
+  async function handleRetryAnalysis(imageId) {
+    setRetryingImageId(imageId)
+    const outcome = await analyzeProjectImage(imageId)
+    await loadImages()
+    setRetryingImageId(null)
+
+    if (outcome?.status === 'PROCESSED') {
+      toast.success('AI analysis complete')
+      return
+    }
+    toast.error('AI analysis failed again', outcome?.result?.error ?? 'The photo itself is unaffected.')
   }
 
   async function loadProject() {
@@ -719,6 +756,8 @@ export default function ProjectMonitoringDetail() {
         onClose={() => setHistoryOpen(false)}
         updates={updates}
         imagesByUpdate={imagesByUpdate}
+        onRetryAnalysis={handleRetryAnalysis}
+        retryingImageId={retryingImageId}
       />
 
       {cameraOpen ? (

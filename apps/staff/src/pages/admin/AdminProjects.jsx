@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { ArrowRight, FolderKanban } from 'lucide-react'
+import { useSearchParams } from 'react-router-dom'
+import { ArrowRight, FolderKanban, X } from 'lucide-react'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
 import PageHeader from '../../components/ui/PageHeader'
@@ -19,11 +20,13 @@ const selectClass =
 // their own dashboards. No writes happen here.
 export default function AdminProjects() {
   const toast = useToast()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [projects, setProjects] = useState([])
   const [offices, setOffices] = useState([])
   const [loading, setLoading] = useState(true)
   const [officeFilter, setOfficeFilter] = useState('')
-  const [statusFilter, setStatusFilter] = useState('')
+  const [statusFilter, setStatusFilter] = useState(searchParams.get('status') ?? '')
+  const dssFilter = searchParams.get('dss') === '1'
 
   async function loadOffices() {
     const { data, error } = await supabase.from('offices').select('id, name').order('name', { ascending: true })
@@ -35,7 +38,7 @@ export default function AdminProjects() {
     let query = supabase
       .from('projects')
       .select(
-        `id, project_code, title, status, estimated_cost, created_at,
+        `id, project_code, title, status, estimated_cost, approved_budget, created_at,
          offices(name),
          creator:profiles!projects_created_by_fkey(full_name)`,
       )
@@ -43,6 +46,9 @@ export default function AdminProjects() {
 
     if (officeFilter) query = query.eq('office_id', officeFilter)
     if (statusFilter) query = query.eq('status', statusFilter)
+    // Mirrors the dashboard's "Requiring Attention" tile query — projects
+    // whose DSS decision isn't ON_TRACK/COMPLETED.
+    if (dssFilter) query = query.not('dss_decision', 'in', '(ON_TRACK,COMPLETED)')
 
     const { data, error } = await query
 
@@ -60,7 +66,21 @@ export default function AdminProjects() {
 
   useEffect(() => {
     loadProjects()
-  }, [officeFilter, statusFilter])
+  }, [officeFilter, statusFilter, dssFilter])
+
+  function updateStatusFilter(value) {
+    setStatusFilter(value)
+    const next = new URLSearchParams(searchParams)
+    if (value) next.set('status', value)
+    else next.delete('status')
+    setSearchParams(next)
+  }
+
+  function clearDssFilter() {
+    const next = new URLSearchParams(searchParams)
+    next.delete('dss')
+    setSearchParams(next)
+  }
 
   return (
     <div>
@@ -86,7 +106,7 @@ export default function AdminProjects() {
 
         <select
           value={statusFilter}
-          onChange={(event) => setStatusFilter(event.target.value)}
+          onChange={(event) => updateStatusFilter(event.target.value)}
           className={selectClass}
         >
           <option value="">All statuses</option>
@@ -96,6 +116,17 @@ export default function AdminProjects() {
             </option>
           ))}
         </select>
+
+        {dssFilter ? (
+          <button
+            type="button"
+            onClick={clearDssFilter}
+            className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-700 hover:bg-amber-100"
+          >
+            Requiring DSS Attention
+            <X className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
+        ) : null}
       </div>
 
       {loading ? (
@@ -107,7 +138,14 @@ export default function AdminProjects() {
           description="No project matches these filters yet."
         />
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60">
+        <>
+          <p className="mb-3 text-sm text-slate-500">
+            {projects.length} project{projects.length === 1 ? '' : 's'} — Total Budget:{' '}
+            <span className="font-medium text-slate-700">
+              {formatCurrency(projects.reduce((sum, p) => sum + Number(p.approved_budget ?? p.estimated_cost ?? 0), 0))}
+            </span>
+          </p>
+          <div className="overflow-x-auto rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60">
           <table className="w-full text-left text-sm">
             <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr>
@@ -115,7 +153,7 @@ export default function AdminProjects() {
                 <th className="px-4 py-2.5 font-medium">Title</th>
                 <th className="px-4 py-2.5 font-medium">Office</th>
                 <th className="px-4 py-2.5 font-medium">Created By</th>
-                <th className="px-4 py-2.5 font-medium">Est. Cost</th>
+                <th className="px-4 py-2.5 font-medium">Budget</th>
                 <th className="px-4 py-2.5 font-medium">Status</th>
                 <th className="px-4 py-2.5 font-medium">Created</th>
                 <th className="px-4 py-2.5 font-medium" />
@@ -128,7 +166,9 @@ export default function AdminProjects() {
                   <td className="px-4 py-2.5 text-slate-800">{project.title}</td>
                   <td className="px-4 py-2.5 text-slate-600">{project.offices?.name ?? '—'}</td>
                   <td className="px-4 py-2.5 text-slate-600">{project.creator?.full_name ?? '—'}</td>
-                  <td className="px-4 py-2.5 text-slate-600">{formatCurrency(project.estimated_cost)}</td>
+                  <td className="px-4 py-2.5 text-slate-600">
+                    {formatCurrency(project.approved_budget ?? project.estimated_cost)}
+                  </td>
                   <td className="px-4 py-2.5">
                     <Badge tone={PROJECT_STATUS_TONES[project.status]}>
                       {PROJECT_STATUS_LABELS[project.status] ?? project.status}
@@ -144,7 +184,8 @@ export default function AdminProjects() {
               ))}
             </tbody>
           </table>
-        </div>
+          </div>
+        </>
       )}
     </div>
   )

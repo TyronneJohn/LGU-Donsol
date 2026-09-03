@@ -1,21 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
-import { FolderKanban, MapPin, Search, X } from 'lucide-react'
+import { FolderKanban, Search, X } from 'lucide-react'
 import { supabase } from '@shared/lib/supabaseClient'
 import { formatCurrency, formatDate } from '@shared/utils/format'
 import { PROJECT_STATUS_LABELS, PROJECT_STATUS_TONES } from '@shared/utils/projectStatus'
-import { isWithinDonsol } from '@shared/utils/geo'
 import Badge from '@shared/components/ui/Badge'
 import { LoadingState } from '@shared/components/ui/LoadingState'
 import EmptyState from '@shared/components/ui/EmptyState'
-import ProjectMap from '@shared/components/ProjectMap'
 
-const STATUS_FILTERS = [
-  'APPROVED',
-  'FOR_PROCUREMENT',
-  'FOR_IMPLEMENTATION',
-  'ONGOING',
-  'COMPLETED',
-]
+const STATUS_FILTERS = ['ONGOING', 'COMPLETED']
 
 export default function PublicProjects() {
   const [projects, setProjects] = useState([])
@@ -32,7 +24,7 @@ export default function PublicProjects() {
         .select('*')
         .order('published_at', { ascending: false })
 
-      if (!error) setProjects(data ?? [])
+      if (!error) setProjects((data ?? []).filter((p) => STATUS_FILTERS.includes(p.status)))
       setLoading(false)
     }
     loadProjects()
@@ -116,28 +108,49 @@ export default function PublicProjects() {
             }
           />
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {filtered.map((project) => (
-              <button
-                key={project.id}
-                type="button"
-                onClick={() => setSelected(project)}
-                className="flex flex-col items-start gap-2 rounded-xl border border-slate-200/70 bg-white p-4 text-left shadow-sm shadow-slate-200/60 transition-shadow hover:shadow-md"
-              >
-                <Badge tone={PROJECT_STATUS_TONES[project.status]}>
-                  {PROJECT_STATUS_LABELS[project.status] ?? project.status}
-                </Badge>
-                <h2 className="text-sm font-semibold text-slate-800">{project.title}</h2>
-                <p className="text-xs text-slate-500">{project.project_code}</p>
-                <p className="flex items-center gap-1 text-xs text-slate-500">
-                  <MapPin className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                  {project.barangay || '—'}
-                </p>
-                <p className="text-xs font-medium text-slate-600">
-                  {formatCurrency(project.approved_budget ?? project.estimated_cost)}
-                </p>
-              </button>
-            ))}
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-left text-sm">
+              <thead>
+                <tr className="bg-slate-50">
+                  <th className="border border-slate-300 px-3 py-2 font-semibold text-slate-700">Project Name</th>
+                  <th className="border border-slate-300 px-3 py-2 font-semibold text-slate-700">Code</th>
+                  <th className="border border-slate-300 px-3 py-2 font-semibold text-slate-700">Location</th>
+                  <th className="border border-slate-300 px-3 py-2 font-semibold text-slate-700">Approved Budget</th>
+                  <th className="border border-slate-300 px-3 py-2 font-semibold text-slate-700">Fund Source</th>
+                  <th className="border border-slate-300 px-3 py-2 font-semibold text-slate-700">Target Start</th>
+                  <th className="border border-slate-300 px-3 py-2 font-semibold text-slate-700">Target Completion</th>
+                  <th className="border border-slate-300 px-3 py-2 font-semibold text-slate-700">Status</th>
+                  <th className="border border-slate-300 px-3 py-2 font-semibold text-slate-700">Date Completed</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((project) => (
+                  <tr
+                    key={project.id}
+                    onClick={() => setSelected(project)}
+                    className="cursor-pointer odd:bg-white even:bg-slate-50/50 hover:bg-blue-50/60"
+                  >
+                    <td className="border border-slate-300 px-3 py-2 font-medium text-slate-800">{project.title}</td>
+                    <td className="border border-slate-300 px-3 py-2 text-slate-600">{project.project_code}</td>
+                    <td className="border border-slate-300 px-3 py-2 text-slate-600">{project.barangay || '—'}</td>
+                    <td className="border border-slate-300 px-3 py-2 text-slate-600">
+                      {formatCurrency(project.approved_budget ?? project.estimated_cost)}
+                    </td>
+                    <td className="border border-slate-300 px-3 py-2 text-slate-600">{project.funding_source || '—'}</td>
+                    <td className="border border-slate-300 px-3 py-2 text-slate-600">{formatDate(project.start_date_planned)}</td>
+                    <td className="border border-slate-300 px-3 py-2 text-slate-600">{formatDate(project.end_date_planned)}</td>
+                    <td className="border border-slate-300 px-3 py-2">
+                      <Badge tone={PROJECT_STATUS_TONES[project.status]}>
+                        {PROJECT_STATUS_LABELS[project.status] ?? project.status}
+                      </Badge>
+                    </td>
+                    <td className="border border-slate-300 px-3 py-2 text-slate-600">
+                      {project.status === 'COMPLETED' ? formatDate(project.end_date_actual) : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>
@@ -157,8 +170,6 @@ function PublicProjectDetail({ project, onClose }) {
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [onClose])
-
-  const hasLocation = isWithinDonsol(project.latitude, project.longitude)
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
@@ -209,16 +220,14 @@ function PublicProjectDetail({ project, onClose }) {
           <Field label="Budget">{formatCurrency(project.approved_budget ?? project.estimated_cost)}</Field>
           <Field label="Planned Start">{formatDate(project.start_date_planned)}</Field>
           <Field label="Planned End">{formatDate(project.end_date_planned)}</Field>
+          {project.start_date_actual ? (
+            <Field label="Actual Start">{formatDate(project.start_date_actual)}</Field>
+          ) : null}
+          {project.end_date_actual ? (
+            <Field label="Actual Completion">{formatDate(project.end_date_actual)}</Field>
+          ) : null}
           <Field label="Published">{formatDate(project.published_at)}</Field>
         </div>
-
-        {hasLocation ? (
-          <ProjectMap projects={[project]} height="320px" />
-        ) : (
-          <p className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-xs text-slate-400">
-            No location on file for this project.
-          </p>
-        )}
       </div>
     </div>
   )

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { HardHat } from 'lucide-react'
+import { useSearchParams } from 'react-router-dom'
+import { HardHat, X } from 'lucide-react'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
 import { useAuth } from '../../hooks/useAuth'
@@ -19,8 +20,10 @@ import { DSS_DECISION_LABELS, getDssSeverityTone } from '@shared/utils/decisionS
 export default function SiteMonitoring() {
   const toast = useToast()
   const { user } = useAuth()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [projects, setProjects] = useState([])
   const [loading, setLoading] = useState(true)
+  const statusFilter = searchParams.get('status') ?? ''
 
   async function loadProjects() {
     setLoading(true)
@@ -42,12 +45,18 @@ export default function SiteMonitoring() {
       return
     }
 
-    const { data: projectRows, error: projectsError } = await supabase
+    let query = supabase
       .from('projects')
       .select('id, project_code, title, status, end_date_planned, dss_decision, dss_severity')
       .eq('office_id', profile.office_id)
-      .in('status', SITE_MONITORING_VISIBLE_STATUSES)
       .order('created_at', { ascending: false })
+
+    // A dashboard tile links here with a specific status (already known to
+    // be one of SITE_MONITORING_VISIBLE_STATUSES); with no filter, show the
+    // full monitored set as before.
+    query = statusFilter ? query.eq('status', statusFilter) : query.in('status', SITE_MONITORING_VISIBLE_STATUSES)
+
+    const { data: projectRows, error: projectsError } = await query
 
     if (projectsError) {
       toast.error('Could not load your projects', projectsError.message)
@@ -97,13 +106,25 @@ export default function SiteMonitoring() {
 
   useEffect(() => {
     loadProjects()
-  }, [])
+  }, [statusFilter])
 
   return (
     <div>
       <PageHeader
         title="Site Monitoring"
         description="Report progress, upload site photos, and log issues on approved projects."
+        actions={
+          statusFilter ? (
+            <button
+              type="button"
+              onClick={() => setSearchParams(new URLSearchParams())}
+              className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"
+            >
+              {PROJECT_STATUS_LABELS[statusFilter] ?? statusFilter}
+              <X className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+          ) : undefined
+        }
         breadcrumbs={[{ label: 'Dashboard', to: '/engineering' }, { label: 'Site Monitoring' }]}
       />
 

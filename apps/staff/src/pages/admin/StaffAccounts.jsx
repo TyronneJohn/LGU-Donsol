@@ -15,6 +15,16 @@ const inputClass =
 
 const EMPTY_FORM = { email: '', password: '', office_id: '' }
 
+// AuthContext's presence heartbeat (apps/staff/src/contexts/AuthContext.jsx)
+// upserts a profile_sessions row per open tab/device every 60s, and deletes
+// only that row on sign-out — so an account with one session signed out and
+// another still open correctly keeps showing Active. A few missed beats'
+// worth of slack absorbs normal network jitter without a merely-slow tab
+// reading as offline.
+const HEARTBEAT_INTERVAL_MS = 60_000
+const ONLINE_THRESHOLD_MS = HEARTBEAT_INTERVAL_MS * 3
+const REFRESH_INTERVAL_MS = 30_000
+
 // Account creation itself happens in the create-staff-account Edge
 // Function (supabase/functions/create-staff-account) — it needs the
 // service role key, which can never live in this client bundle. Role isn't
@@ -24,6 +34,7 @@ export default function StaffAccounts() {
   const toast = useToast()
   const [staff, setStaff] = useState([])
   const [offices, setOffices] = useState([])
+  const [onlineIds, setOnlineIds] = useState(new Set())
   const [loading, setLoading] = useState(true)
   const [formOpen, setFormOpen] = useState(false)
   const [form, setForm] = useState(EMPTY_FORM)
@@ -31,33 +42,53 @@ export default function StaffAccounts() {
 
   const firstFieldRef = useRef(null)
 
-  async function loadData() {
-    setLoading(true)
-    const [staffResult, officesResult] = await Promise.all([
+  // `silent` skips the loading spinner — used for the background refresh
+  // below so the "who's online" status can update without the whole table
+  // flashing back to a loading state every 30s.
+  async function loadData({ silent = false } = {}) {
+    if (!silent) setLoading(true)
+    const [staffResult, officesResult, sessionsResult] = await Promise.all([
       supabase
         .from('profiles')
         .select('id, full_name, role, is_active, offices(name)')
         .order('full_name', { ascending: true }),
       supabase.from('offices').select('id, name').order('name', { ascending: true }),
+      // Any profile with at least one session row this recent is online —
+      // "recent" absorbs one or two missed heartbeats without flapping.
+      supabase
+        .from('profile_sessions')
+        .select('profile_id')
+        .gte('last_seen_at', new Date(Date.now() - ONLINE_THRESHOLD_MS).toISOString()),
     ])
 
     if (staffResult.error) {
-      toast.error('Could not load staff accounts', staffResult.error.message)
+      if (!silent) toast.error('Could not load staff accounts', staffResult.error.message)
     } else {
       setStaff(staffResult.data ?? [])
     }
 
     if (officesResult.error) {
-      toast.error('Could not load offices', officesResult.error.message)
+      if (!silent) toast.error('Could not load offices', officesResult.error.message)
     } else {
       setOffices(officesResult.data ?? [])
     }
 
-    setLoading(false)
+    if (sessionsResult.error) {
+      if (!silent) toast.error('Could not load online status', sessionsResult.error.message)
+    } else {
+      setOnlineIds(new Set((sessionsResult.data ?? []).map((row) => row.profile_id)))
+    }
+
+    if (!silent) setLoading(false)
   }
 
   useEffect(() => {
     loadData()
+    // Online status is only as fresh as the last fetch — poll quietly so an
+    // admin watching this page sees people go offline without a manual
+    // reload.
+    const interval = setInterval(() => loadData({ silent: true }), REFRESH_INTERVAL_MS)
+    return () => clearInterval(interval)
   }, [])
 
   useEffect(() => {
@@ -177,9 +208,13 @@ export default function StaffAccounts() {
                   </td>
                   <td className="px-4 py-2.5 text-slate-600">{person.offices?.name ?? '—'}</td>
                   <td className="px-4 py-2.5">
-                    <Badge tone={person.is_active ? 'green' : 'red'}>
-                      {person.is_active ? 'Active' : 'Inactive'}
-                    </Badge>
+                    {!person.is_active ? (
+                      <Badge tone="red">Disabled</Badge>
+                    ) : onlineIds.has(person.id) ? (
+                      <Badge tone="green">Active</Badge>
+                    ) : (
+                      <Badge tone="neutral">Inactive</Badge>
+                    )}
                   </td>
                 </tr>
               ))}

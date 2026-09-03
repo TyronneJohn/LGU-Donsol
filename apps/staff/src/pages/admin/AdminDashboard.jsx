@@ -1,23 +1,28 @@
 import { useEffect, useState } from 'react'
-import { AlertTriangle, FolderKanban, Landmark, RotateCcw, ScrollText, Users } from 'lucide-react'
+import { AlertTriangle, FolderKanban, Landmark, Pencil, RotateCcw, ScrollText, Users } from 'lucide-react'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
+import { useAnnualBudget } from '../../hooks/useAnnualBudget'
 import PageHeader from '../../components/ui/PageHeader'
 import Button from '../../components/ui/Button'
+import StatTile from '../../components/ui/StatTile'
+import SetAnnualBudgetModal from '../../components/ui/SetAnnualBudgetModal'
 import { LoadingState } from '@shared/components/ui/LoadingState'
 import EmptyState from '@shared/components/ui/EmptyState'
 import { ProjectStatusCharts } from '../../components/ui/ProjectStatusCharts'
+import { formatCurrency } from '@shared/utils/format'
 
+// Each tile links to /admin/projects pre-filtered to exactly the set it
+// counts, so what you click through to always matches the number you saw.
 const STAT_TILES = [
-  { key: 'total', label: 'Total Projects' },
-  { key: 'draft', label: 'Draft' },
-  { key: 'submitted', label: 'Submitted to Engineering' },
-  { key: 'endorsed', label: 'Endorsed to BAC' },
-  { key: 'procurement', label: 'In Procurement' },
-  { key: 'implementation', label: 'Under Implementation' },
-  { key: 'ongoing', label: 'Ongoing' },
-  { key: 'completed', label: 'Completed' },
-  { key: 'attention', label: 'Requiring Attention (DSS)', tone: 'amber' },
+  { key: 'total', label: 'Total Projects', to: '/admin/projects' },
+  { key: 'submitted', label: 'Submitted to Engineering', to: '/admin/projects?status=SUBMITTED_FOR_REVIEW' },
+  { key: 'endorsed', label: 'Endorsed to BAC', to: '/admin/projects?status=APPROVED' },
+  { key: 'procurement', label: 'In Procurement', to: '/admin/projects?status=FOR_PROCUREMENT' },
+  { key: 'implementation', label: 'Under Implementation', to: '/admin/projects?status=FOR_IMPLEMENTATION' },
+  { key: 'ongoing', label: 'Ongoing', to: '/admin/projects?status=ONGOING' },
+  { key: 'completed', label: 'Completed', to: '/admin/projects?status=COMPLETED' },
+  { key: 'attention', label: 'Requiring Attention (DSS)', to: '/admin/projects?dss=1', tone: 'amber' },
 ]
 
 export default function AdminDashboard() {
@@ -26,6 +31,8 @@ export default function AdminDashboard() {
   const [loadError, setLoadError] = useState(null)
   const [counts, setCounts] = useState(null)
   const [statusTally, setStatusTally] = useState({})
+  const [budgetModalOpen, setBudgetModalOpen] = useState(false)
+  const budget = useAnnualBudget()
 
   async function loadSummary() {
     setLoading(true)
@@ -57,7 +64,6 @@ export default function AdminDashboard() {
 
       setCounts({
         total: projects.length,
-        draft: byStatus('DRAFT'),
         submitted: byStatus('SUBMITTED_FOR_REVIEW'),
         endorsed: byStatus('APPROVED'),
         procurement: byStatus('FOR_PROCUREMENT'),
@@ -102,21 +108,34 @@ export default function AdminDashboard() {
         />
       ) : (
         <>
+          <div className="mb-3 flex flex-col gap-3 rounded-xl border border-slate-200/70 bg-white p-5 shadow-sm shadow-slate-200/60 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-medium uppercase tracking-wide text-slate-400">
+                Remaining Budget — {budget.year}
+              </p>
+              <p className={`mt-1 text-3xl font-semibold ${budget.remaining < 0 ? 'text-red-600' : 'text-slate-800'}`}>
+                {budget.loading ? '—' : budget.ceiling != null ? formatCurrency(budget.remaining) : 'Not set'}
+              </p>
+              {!budget.loading && budget.ceiling != null ? (
+                <p className="mt-1 text-xs text-slate-500">
+                  {formatCurrency(budget.ceiling)} appropriated · {formatCurrency(budget.committed)} committed to
+                  endorsed and ongoing projects
+                </p>
+              ) : null}
+            </div>
+            <Button variant="secondary" icon={Pencil} onClick={() => setBudgetModalOpen(true)}>
+              {budget.ceiling != null ? 'Edit Annual Budget' : 'Set Annual Budget'}
+            </Button>
+          </div>
           <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
             {STAT_TILES.map((tile) => (
-              <div key={tile.key} className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-4">
-                <p className="text-xs font-medium uppercase tracking-wide text-slate-400">{tile.label}</p>
-                <p
-                  className={`mt-1 flex items-center gap-1.5 text-2xl font-semibold ${
-                    tile.tone === 'amber' && counts[tile.key] > 0 ? 'text-amber-600' : 'text-slate-800'
-                  }`}
-                >
-                  {tile.tone === 'amber' && counts[tile.key] > 0 ? (
-                    <AlertTriangle className="h-5 w-5" aria-hidden="true" />
-                  ) : null}
-                  {counts[tile.key]}
-                </p>
-              </div>
+              <StatTile
+                key={tile.key}
+                label={tile.label}
+                value={counts[tile.key]}
+                to={tile.to}
+                warn={tile.tone === 'amber' && counts[tile.key] > 0}
+              />
             ))}
           </div>
           <ProjectStatusCharts counts={statusTally} title="Projects by Status — All Offices" />
@@ -140,6 +159,14 @@ export default function AdminDashboard() {
           </div>
         </>
       )}
+
+      <SetAnnualBudgetModal
+        open={budgetModalOpen}
+        year={budget.year}
+        currentAmount={budget.ceiling}
+        onSave={budget.save}
+        onClose={() => setBudgetModalOpen(false)}
+      />
     </div>
   )
 }
