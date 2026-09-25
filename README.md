@@ -1,16 +1,42 @@
-# React + Vite
+# LGU Donsol
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Project monitoring system for the Municipality of Donsol.
 
-Currently, two official plugins are available:
+## Folder structure
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+```
+frontend/                 React + Vite (deployed to Vercel)
+  apps/
+    public/               Public transparency portal
+    staff/                Staff portal (Admin, MPDC, Engineering, BAC)
+  shared/src/             Code shared by both apps (imported as `@shared/...`)
+  static/                 Static files copied as-is into each build (favicon, seal)
+backend/                  Supabase
+  supabase/
+    migrations/           Database schema, RLS policies, triggers
+    functions/            Edge Functions (Deno)
+dist/                     Build output (git-ignored)
+```
 
-## React Compiler
+`package.json`, `.env`, and the lint config stay at the repo root and cover the whole frontend.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Frontend
 
-## Expanding the Oxlint configuration
+```sh
+npm install
+cp .env.example .env      # fill in VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY
+npm run dev:public        # or dev:staff
+npm run build:public      # -> dist/public
+npm run build:staff       # -> dist/staff
+```
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+## Backend (Supabase CLI)
+
+Run the CLI from `backend/`, or pass `--workdir backend` from the repo root:
+
+```sh
+cd backend
+supabase link --project-ref <ref>
+supabase db push
+supabase functions deploy <name>
+```

@@ -1,0 +1,211 @@
+-- Puts the budget back where the Local Government Code puts it: MPDC owns the
+-- money, Engineering owns the Program of Works.
+--
+-- Why this reverses 20260812140000: under RA 7160 the planning and development
+-- coordinator prepares the AIP and sits on the Local Finance Committee
+-- (Sec. 316, Sec. 476), so the funding source and the allocation are MPDC's to
+-- declare. The municipal engineer's deliverable is the POW and its detailed
+-- engineering cost estimate (Sec. 477) — which is what GPPB then treats as the
+-- basis of the ABC. The system had these swapped: Engineering was the only
+-- role that could write approved_budget/funding_source, and MPDC could write
+-- neither.
+--
+-- Column-wise this is a small change. approved_budget and funding_source keep
+-- their names and meaning (the allocation and where it comes from); only the
+-- office allowed to write them moves. The POW is new, because nothing on the
+-- row previously represented it — the POW *document* could already be uploaded
+-- (project_documents.document_category = 'PROGRAM_OF_WORKS'), but its amount
+-- had nowhere to live.
+--
+-- Still one projects row for the whole lifecycle. No per-office copies.
+
+-- =========================================================================
+-- 1. POW columns. Engineering-written, and the record that their technical
+--    review actually happened — see part 4 for why that matters.
+-- =========================================================================
+alter table public.projects
+  add column if not exists pow_amount numeric(14,2) check (pow_amount >= 0),
+  add column if not exists pow_date date,
+  add column if not exists pow_submitted_at timestamptz,
+  add column if not exists pow_submitted_by uuid references public.profiles(id) on delete restrict;
+
+comment on column public.projects.approved_budget is
+  'MPDC allocation for the project, from the AIP. Written by MPDC while the project is a draft; acts as the ceiling the POW is measured against.';
+comment on column public.projects.pow_amount is
+  'Total cost in the Engineering Program of Works. Basis of the ABC at procurement (GPPB); written only by Engineering, only during review.';
+
+-- =========================================================================
+-- 2. Column-level fence, rewritten from 20260818100000 (the current
+--    definition) with the ownership swap applied.
+--
+--    Engineering: loses approved_budget and funding_source, gains the four
+--    pow_* columns. MPDC: keeps approved_budget/funding_source on a draft
+--    (they were never in the non-APPROVED forbidden list, so no change is
+--    needed there), and is fenced out of pow_* in both branches the same way
+--    it is fenced out of the dss_* columns.
+-- =========================================================================
+create or replace function public.guard_project_field_updates()
+returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if coalesce(current_setting('app.dss_internal_write', true), '') = 'true' then
+    return new;
+  end if;
+
+  if public.app_is_admin_or_system() then
+    return new;
+  end if;
+
+  if public.app_current_role() = 'mpdc' then
+    if old.status = 'APPROVED' then
+      if new.title is distinct from old.title
+        or new.description is distinct from old.description
+        or new.project_category is distinct from old.project_category
+        or new.barangay is distinct from old.barangay
+        or new.location_text is distinct from old.location_text
+        or new.latitude is distinct from old.latitude
+        or new.longitude is distinct from old.longitude
+        or new.estimated_cost is distinct from old.estimated_cost
+        or new.approved_budget is distinct from old.approved_budget
+        or new.funding_source is distinct from old.funding_source
+        or new.start_date_planned is distinct from old.start_date_planned
+        or new.end_date_planned is distinct from old.end_date_planned
+        or new.start_date_actual is distinct from old.start_date_actual
+        or new.end_date_actual is distinct from old.end_date_actual
+        or new.office_id is distinct from old.office_id
+        or new.created_by is distinct from old.created_by
+        or new.dss_decision is distinct from old.dss_decision
+        or new.dss_severity is distinct from old.dss_severity
+        or new.dss_evaluated_at is distinct from old.dss_evaluated_at
+        or new.pow_amount is distinct from old.pow_amount
+        or new.pow_date is distinct from old.pow_date
+        or new.pow_submitted_at is distinct from old.pow_submitted_at
+        or new.pow_submitted_by is distinct from old.pow_submitted_by
+      then
+        raise exception 'MPDC may only update publication fields (visibility, published_at, published_by) on an approved project.';
+      end if;
+    else
+      if new.visibility is distinct from old.visibility
+        or new.published_at is distinct from old.published_at
+        or new.published_by is distinct from old.published_by
+        or new.created_by is distinct from old.created_by
+        or new.office_id is distinct from old.office_id
+        or new.dss_decision is distinct from old.dss_decision
+        or new.dss_severity is distinct from old.dss_severity
+        or new.dss_evaluated_at is distinct from old.dss_evaluated_at
+        or new.pow_amount is distinct from old.pow_amount
+        or new.pow_date is distinct from old.pow_date
+        or new.pow_submitted_at is distinct from old.pow_submitted_at
+        or new.pow_submitted_by is distinct from old.pow_submitted_by
+      then
+        raise exception 'MPDC cannot change publication, ownership, or Program of Works fields on a project.';
+      end if;
+    end if;
+  end if;
+
+  if public.app_current_role() = 'engineering' then
+    if new.title is distinct from old.title
+      or new.description is distinct from old.description
+      or new.project_category is distinct from old.project_category
+      or new.barangay is distinct from old.barangay
+      or new.location_text is distinct from old.location_text
+      or new.latitude is distinct from old.latitude
+      or new.longitude is distinct from old.longitude
+      or new.estimated_cost is distinct from old.estimated_cost
+      or new.approved_budget is distinct from old.approved_budget
+      or new.funding_source is distinct from old.funding_source
+      or new.start_date_planned is distinct from old.start_date_planned
+      or new.end_date_planned is distinct from old.end_date_planned
+      or new.start_date_actual is distinct from old.start_date_actual
+      or new.end_date_actual is distinct from old.end_date_actual
+      or new.office_id is distinct from old.office_id
+      or new.created_by is distinct from old.created_by
+      or new.visibility is distinct from old.visibility
+      or new.published_at is distinct from old.published_at
+      or new.published_by is distinct from old.published_by
+      or new.dss_decision is distinct from old.dss_decision
+      or new.dss_severity is distinct from old.dss_severity
+      or new.dss_evaluated_at is distinct from old.dss_evaluated_at
+    then
+      raise exception 'Engineering may only update the Program of Works fields while a project is under review.';
+    end if;
+
+    if new.pow_submitted_by is distinct from old.pow_submitted_by
+      and new.pow_submitted_by is distinct from auth.uid()
+    then
+      raise exception 'A Program of Works must be recorded under the account of the engineer submitting it.';
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+-- =========================================================================
+-- 3. MPDC must supply the allocation before the project can be submitted —
+--    Engineering costs the work against it, so it has to be there first.
+--    Same guard as 20260824100000, two fields longer.
+-- =========================================================================
+create or replace function public.guard_project_submission_completeness()
+returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  v_project record;
+begin
+  select title, description, project_category, sector, barangay, location_text,
+         estimated_cost, approved_budget, funding_source,
+         start_date_planned, end_date_planned, office_id
+  into v_project
+  from public.projects
+  where id = new.project_id;
+
+  if v_project.title is null or btrim(v_project.title) = ''
+    or v_project.description is null or btrim(v_project.description) = ''
+    or v_project.project_category is null or btrim(v_project.project_category) = ''
+    or v_project.sector is null
+    or v_project.barangay is null or btrim(v_project.barangay) = ''
+    or v_project.location_text is null or btrim(v_project.location_text) = ''
+    or v_project.estimated_cost is null
+    or v_project.approved_budget is null
+    or v_project.funding_source is null or btrim(v_project.funding_source) = ''
+    or v_project.start_date_planned is null
+    or v_project.end_date_planned is null
+    or v_project.office_id is null
+  then
+    raise exception 'Project is missing required fields (name, description, programs/project/activities, category, barangay, location, estimated budget, approved budget, funding source, schedule, or implementing office) and cannot be submitted for review.';
+  end if;
+
+  return new;
+end;
+$$;
+
+-- =========================================================================
+-- 4. The endorsement gate, repointed.
+--
+--    20260820100000 used "approved_budget is set and positive" as proof that
+--    Engineering had reviewed the project, on the reasoning that it was the
+--    one field only Engineering could write. That reasoning expires with
+--    part 2: approved_budget is MPDC's own field now, so keeping the gate as
+--    it stands would have MPDC satisfying its own precondition and
+--    endorsing straight to BAC without Engineering ever opening the project.
+--
+--    pow_amount inherits the role, and inherits it more honestly — a POW is
+--    the actual deliverable of the technical review, not a proxy for it.
+-- =========================================================================
+drop policy if exists endorsements_insert_mpdc on public.project_endorsements;
+create policy endorsements_insert_mpdc on public.project_endorsements
+  for insert to authenticated
+  with check (
+    public.app_current_role() in ('mpdc', 'admin')
+    and endorsed_by = auth.uid()
+    and exists (
+      select 1 from public.projects p
+      where p.id = project_id
+        and p.status = 'SUBMITTED_FOR_REVIEW'
+        and p.approved_budget is not null
+        and p.approved_budget > 0
+        and p.pow_amount is not null
+        and p.pow_amount > 0
+        and (public.app_is_admin() or p.created_by = auth.uid())
+    )
+  );
