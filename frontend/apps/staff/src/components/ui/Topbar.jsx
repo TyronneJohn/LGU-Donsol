@@ -1,6 +1,7 @@
 import { Menu } from 'lucide-react'
 import MessageButton from './MessageButton'
 import NotificationBell from './NotificationBell'
+import ThemeToggle from './ThemeToggle'
 import UserMenu from './UserMenu'
 
 export default function Topbar({ title, onMenuClick }) {
@@ -21,6 +22,7 @@ export default function Topbar({ title, onMenuClick }) {
       <div className="flex shrink-0 items-center gap-1 sm:gap-2">
         <MessageButton />
         <NotificationBell />
+        <ThemeToggle />
         <UserMenu />
       </div>
     </header>

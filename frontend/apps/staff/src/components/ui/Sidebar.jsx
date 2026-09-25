@@ -39,7 +39,7 @@ export default function Sidebar({
       ) : null}
 
       <aside
-        className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col overflow-hidden bg-linear-to-b from-blue-900 via-blue-950 to-blue-950 shadow-xl shadow-blue-950/30 transition-all duration-200 ease-in-out lg:sticky lg:top-0 lg:h-screen lg:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col overflow-hidden bg-linear-to-b from-blue-900 via-blue-950 to-blue-950 shadow-xl shadow-blue-950/30 dark:border-r dark:border-white/10 dark:from-neutral-950 dark:via-black dark:to-black dark:shadow-none transition-all duration-200 ease-in-out lg:sticky lg:top-0 lg:h-screen lg:translate-x-0 ${
           open ? 'translate-x-0' : '-translate-x-full'
         } ${collapsed ? 'lg:w-24' : 'lg:w-64'}`}
       >
@@ -57,7 +57,7 @@ export default function Sidebar({
             />
             <div className={`min-w-0 leading-tight ${collapsed ? 'lg:hidden' : ''}`}>
               <p className="truncate font-display text-sm font-semibold text-white">{brandTitle}</p>
-              <p className="truncate text-xs text-blue-300">{brandSubtitle}</p>
+              <p className="truncate text-xs text-blue-300 dark:text-neutral-400">{brandSubtitle}</p>
             </div>
           </div>
 
@@ -69,7 +69,7 @@ export default function Sidebar({
               type="button"
               onClick={onToggleCollapse}
               aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-              className="hidden rounded-md p-1 text-blue-200 hover:bg-white/10 hover:text-white lg:inline-flex"
+              className="hidden rounded-md p-1 text-blue-200 hover:bg-white/10 hover:text-white dark:text-neutral-400 lg:inline-flex"
             >
               {collapsed ? (
                 <PanelLeftOpen className="h-5 w-5" aria-hidden="true" />
@@ -81,7 +81,7 @@ export default function Sidebar({
               type="button"
               onClick={onClose}
               aria-label="Close navigation"
-              className="rounded-md p-1 text-blue-200 hover:bg-white/10 hover:text-white lg:hidden"
+              className="rounded-md p-1 text-blue-200 hover:bg-white/10 hover:text-white dark:text-neutral-400 lg:hidden"
             >
               <X className="h-5 w-5" aria-hidden="true" />
             </button>
@@ -102,7 +102,7 @@ export default function Sidebar({
                 } ${
                   isActive
                     ? 'bg-linear-to-r from-gold-500 to-gold-400 text-blue-950 shadow-md shadow-gold-500/20'
-                    : 'text-blue-200 hover:bg-white/10 hover:text-white'
+                    : 'text-blue-200 hover:bg-white/10 hover:text-white dark:text-neutral-400'
                 }`
               }
             >

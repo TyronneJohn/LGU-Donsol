@@ -42,11 +42,11 @@ export default function DashboardShell({ title, navItems }) {
     <div className="brand-surface relative flex min-h-screen">
       <div
         aria-hidden="true"
-        className="pointer-events-none fixed -top-32 right-0 h-96 w-96 rounded-full bg-blue-200/40 blur-3xl"
+        className="pointer-events-none fixed -top-32 right-0 h-96 w-96 rounded-full bg-blue-200/40 blur-3xl dark:hidden"
       />
       <div
         aria-hidden="true"
-        className="pointer-events-none fixed -bottom-32 left-1/4 h-96 w-96 rounded-full bg-gold-200/30 blur-3xl"
+        className="pointer-events-none fixed -bottom-32 left-1/4 h-96 w-96 rounded-full bg-gold-200/30 blur-3xl dark:hidden"
       />
 
       <Sidebar

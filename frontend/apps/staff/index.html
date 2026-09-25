@@ -11,6 +11,13 @@
       rel="stylesheet"
     />
     <title>LGU Donsol Staff Portal</title>
+    <!-- Applies a saved dark-mode choice before first paint (no light
+         flash). Key must match THEME_STORAGE_KEY in ThemeContext.jsx. -->
+    <script>
+      try {
+        if (localStorage.getItem('lgu-donsol:theme') === 'dark') document.documentElement.classList.add('dark')
+      } catch {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

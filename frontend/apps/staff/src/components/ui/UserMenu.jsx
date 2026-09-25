@@ -1,4 +1,4 @@
-import { ChevronDown, LogOut, User } from 'lucide-react'
+import { LogOut, User } from 'lucide-react'
 import { useAuth } from '../../hooks/useAuth'
 import { useDismissablePopover } from '../../hooks/useDismissablePopover'
 import { ROLE_LABELS } from '../../utils/roles'
@@ -13,20 +13,20 @@ export default function UserMenu() {
 
   return (
     <div className="relative" ref={containerRef}>
+      {/* Avatar only — the account email lives in the dropdown header
+          below (and the hover title), not in the top bar. */}
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
         aria-haspopup="true"
         aria-expanded={open}
-        className="flex items-center gap-2 rounded-md py-1.5 pl-1.5 pr-2 text-sm hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+        aria-label={`Account menu for ${label}`}
+        title={label}
+        className="flex items-center rounded-full p-1 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
       >
         <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-blue-600 to-blue-800 text-xs font-semibold text-white shadow-sm">
           {initial}
         </span>
-        <span className="hidden max-w-[10rem] truncate font-medium text-slate-700 sm:inline">
-          {label}
-        </span>
-        <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
       </button>
 
       {open ? (

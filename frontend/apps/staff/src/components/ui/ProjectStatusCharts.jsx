@@ -1,6 +1,7 @@
 import { BarChart3, PieChart as PieChartIcon } from 'lucide-react'
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { PROJECT_STATUS_LABELS, PROJECT_STATUS_TONES } from '@shared/utils/projectStatus'
+import { useTheme } from '../../hooks/useTheme'
 
 // Matches the Badge tone palette, pulled from the brand blue/gold scale in
 // index.css so charts read as part of the same system instead of Recharts'
@@ -12,6 +13,16 @@ const TONE_HEX = {
   amber: '#eea325',
   red: '#dc4c4c',
 }
+
+// Recharts takes chart chrome as SVG attributes, which the CSS dark-mode
+// remap in index.css can't reach — so each theme's values live here,
+// mirroring the slate scale each one maps to. Brand blue is lifted in dark
+// since the light navy nearly vanishes against the dark surface.
+const CHART_CHROME = {
+  light: { grid: '#eef2f7', axis: '#e2e8f0', tick: '#64748b', label: '#475569', cursor: '#eef3fb', slice: 'white' },
+  dark: { grid: '#222222', axis: '#2a2a2a', tick: '#9a9a9a', label: '#b5b5b5', cursor: '#1c1c1c', slice: '#111111' },
+}
+const DARK_TONE_HEX = { ...TONE_HEX, blue: '#4f7bcb' }
 
 function ChartTooltip({ active, payload }) {
   if (!active || !payload?.length) return null
@@ -26,7 +37,7 @@ function ChartTooltip({ active, payload }) {
   )
 }
 
-function AngledTick({ x, y, payload }) {
+function AngledTick({ x, y, payload, fill }) {
   return (
     <g transform={`translate(${x},${y})`}>
       <text
@@ -34,7 +45,7 @@ function AngledTick({ x, y, payload }) {
         y={0}
         dy={10}
         textAnchor="end"
-        fill="#475569"
+        fill={fill}
         fontSize={11}
         transform="rotate(-35)"
       >
@@ -49,6 +60,10 @@ function AngledTick({ x, y, payload }) {
 // tally — each dashboard builds it from whatever `projects` rows it already
 // fetched, so this component stays presentation-only.
 export function ProjectStatusCharts({ counts, title = 'Projects by Status' }) {
+  const { isDark } = useTheme()
+  const chrome = isDark ? CHART_CHROME.dark : CHART_CHROME.light
+  const toneHex = isDark ? DARK_TONE_HEX : TONE_HEX
+
   const data = Object.entries(PROJECT_STATUS_LABELS)
     .map(([key, label]) => ({
       key,
@@ -76,7 +91,7 @@ export function ProjectStatusCharts({ counts, title = 'Projects by Status' }) {
             <BarChart data={data} margin={{ top: 8, right: 8, bottom: 48, left: 0 }} barCategoryGap="28%">
               <defs>
                 {data.map((row) => {
-                  const hex = TONE_HEX[row.tone] ?? TONE_HEX.blue
+                  const hex = toneHex[row.tone] ?? toneHex.blue
                   return (
                     <linearGradient key={row.key} id={`bar-${row.key}`} x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor={hex} stopOpacity={1} />
@@ -85,16 +100,16 @@ export function ProjectStatusCharts({ counts, title = 'Projects by Status' }) {
                   )
                 })}
               </defs>
-              <CartesianGrid vertical={false} stroke="#eef2f7" />
+              <CartesianGrid vertical={false} stroke={chrome.grid} />
               <XAxis
                 dataKey="name"
                 interval={0}
-                tick={<AngledTick />}
-                axisLine={{ stroke: '#e2e8f0' }}
+                tick={<AngledTick fill={chrome.label} />}
+                axisLine={{ stroke: chrome.axis }}
                 tickLine={false}
               />
-              <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: '#64748b' }} axisLine={false} tickLine={false} />
-              <Tooltip content={<ChartTooltip />} cursor={{ fill: '#eef3fb' }} />
+              <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: chrome.tick }} axisLine={false} tickLine={false} />
+              <Tooltip content={<ChartTooltip />} cursor={{ fill: chrome.cursor }} />
               <Bar dataKey="value" radius={[8, 8, 0, 0]} maxBarSize={46}>
                 {data.map((row) => (
                   <Cell key={row.key} fill={`url(#bar-${row.key})`} />
@@ -131,7 +146,7 @@ export function ProjectStatusCharts({ counts, title = 'Projects by Status' }) {
                 filter="url(#donut-shadow)"
               >
                 {data.map((row) => (
-                  <Cell key={row.key} fill={TONE_HEX[row.tone] ?? TONE_HEX.blue} stroke="white" strokeWidth={2} />
+                  <Cell key={row.key} fill={toneHex[row.tone] ?? toneHex.blue} stroke={chrome.slice} strokeWidth={2} />
                 ))}
               </Pie>
               <Tooltip content={<ChartTooltip />} />
@@ -148,7 +163,7 @@ export function ProjectStatusCharts({ counts, title = 'Projects by Status' }) {
               <span className="flex min-w-0 items-center gap-1.5 text-slate-600">
                 <span
                   className="h-2 w-2 shrink-0 rounded-full"
-                  style={{ backgroundColor: TONE_HEX[row.tone] ?? TONE_HEX.blue }}
+                  style={{ backgroundColor: toneHex[row.tone] ?? toneHex.blue }}
                   aria-hidden="true"
                 />
                 <span className="truncate">{row.name}</span>

@@ -87,6 +87,130 @@
   color-scheme: light;
 }
 
+/* ─── Dark mode ─────────────────────────────────────────────────────────
+ * Opt-in via the `dark` class on <html>, toggled by the staff app's
+ * ThemeToggle (apps/staff/src/contexts/ThemeContext.jsx). The public site
+ * never sets it, so none of this applies there.
+ *
+ * Rather than adding a dark: twin to ~1,300 color classes across the app,
+ * the light end of each scale is remapped here, and every existing class
+ * follows. The dark end (slate/blue 800-950) is deliberately NOT remapped:
+ * it's what the sidebar, login backdrop and modal scrims are built from,
+ * and those are already dark. The few classes that sit on the wrong side
+ * of that split (white surfaces, dark body text) are overridden below. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+.dark {
+  color-scheme: dark;
+
+  /* True black page with neutral (untinted) grays stepping up from it. */
+  --color-slate-50: #000000;
+  --color-slate-100: #1c1c1c;
+  --color-slate-200: #2a2a2a;
+  --color-slate-300: #3a3a3a;
+  --color-slate-400: #7a7a7a;
+  --color-slate-500: #9a9a9a;
+  --color-slate-600: #b5b5b5;
+  --color-slate-700: #d0d0d0;
+
+  --color-blue-50: #0d1526;
+  --color-blue-100: #13203a;
+
+  --color-gold-50: #1f1a0b;
+
+  --color-red-50: #1f0d0f;
+  --color-red-100: #2b1115;
+  --color-red-200: #4a1c23;
+  --color-red-300: #66252f;
+
+  --color-emerald-50: #0a1d17;
+  --color-emerald-100: #0e281f;
+  --color-emerald-200: #174033;
+
+  --color-amber-50: #1f1708;
+  --color-amber-100: #2b200b;
+  --color-amber-200: #4a3712;
+  --color-amber-300: #5c4516;
+
+  /* Card/panel surface — one step above the black page background. */
+  --dark-surface: #111111;
+}
+
+/* `:where(.dark)` keeps each override at the same specificity as the class
+ * it replaces, so hover:/focus: variants on the same element still win. */
+@layer utilities {
+  :where(.dark) .bg-white,
+  :where(.dark) .file\:bg-white::file-selector-button {
+    background-color: var(--dark-surface);
+  }
+  :where(.dark) .bg-white\/95 {
+    background-color: color-mix(in oklab, var(--dark-surface) 95%, transparent);
+  }
+  :where(.dark) .bg-white\/80 {
+    background-color: color-mix(in oklab, var(--dark-surface) 80%, transparent);
+  }
+  :where(.dark) .bg-white\/70 {
+    background-color: color-mix(in oklab, var(--dark-surface) 70%, transparent);
+  }
+
+  :where(.dark) .text-slate-800,
+  :where(.dark) .hover\:text-slate-800:hover {
+    color: #ededed;
+  }
+  :where(.dark) .text-slate-900,
+  :where(.dark) .hover\:text-slate-900:hover {
+    color: #fafafa;
+  }
+
+  /* Brand navy text is unreadable on dark surfaces; blue-600+ backgrounds
+   * (buttons) keep the real navy, so only text is lifted. */
+  :where(.dark) .text-blue-500 {
+    color: #86a8e6;
+  }
+  :where(.dark) .text-blue-600,
+  :where(.dark) .text-blue-700,
+  :where(.dark) .hover\:text-blue-700:hover {
+    color: #9dbbf0;
+  }
+  :where(.dark) .text-blue-800,
+  :where(.dark) .hover\:text-blue-800:hover {
+    color: #bcd0f3;
+  }
+  /* Modal/popover outlines: a dark hairline vanishes on black, so flip it
+   * to a faint light one to keep panel edges visible. */
+  :where(.dark) .ring-slate-900\/5,
+  :where(.dark) .ring-slate-900\/10 {
+    --tw-ring-color: rgb(255 255 255 / 0.1);
+  }
+
+  :where(.dark) .ring-blue-200 {
+    --tw-ring-color: #223559;
+  }
+  :where(.dark) .border-blue-200 {
+    border-color: #223559;
+  }
+
+  :where(.dark) .text-red-600,
+  :where(.dark) .text-red-700,
+  :where(.dark) .text-red-800,
+  :where(.dark) .hover\:text-red-600:hover {
+    color: #fca5a5;
+  }
+  :where(.dark) .text-emerald-600,
+  :where(.dark) .text-emerald-700,
+  :where(.dark) .text-emerald-800 {
+    color: #6ee7b7;
+  }
+  :where(.dark) .text-amber-600,
+  :where(.dark) .text-amber-700,
+  :where(.dark) .text-amber-800 {
+    color: #fcd34d;
+  }
+  :where(.dark) .text-gold-600 {
+    color: var(--color-gold-400);
+  }
+}
+
 body {
   margin: 0;
   font-family: var(--font-sans);
@@ -112,10 +236,20 @@ body {
     radial-gradient(30rem 20rem at -10% 110%, color-mix(in oklab, var(--color-gold-200) 45%, transparent), transparent 60%);
 }
 
+/* Flat black in dark mode — the brand washes read as muddy stains on it. */
+.dark .brand-surface {
+  background-color: #000000;
+  background-image: none;
+}
+
 .glass-card {
   background: color-mix(in oklab, white 88%, transparent);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
+}
+
+.dark .glass-card {
+  background: color-mix(in oklab, var(--dark-surface) 88%, transparent);
 }
 
 /* Edge/Chromium inject their own reveal-password icon inside
