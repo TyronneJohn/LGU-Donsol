@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { ArrowLeft, ExternalLink, FolderKanban, Paperclip, Search, Send, X } from 'lucide-react'
+import { ArrowLeft, ExternalLink, FileText, FolderKanban, Paperclip, Search, Send, Upload, X } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useAuth } from '../../hooks/useAuth'
@@ -13,7 +13,7 @@ import Badge from '@shared/components/ui/Badge'
 import { LoadingState, Spinner } from '@shared/components/ui/LoadingState'
 import EmptyState from '@shared/components/ui/EmptyState'
 import { ROLES, ROLE_LABELS, ROLE_HOME_PATH } from '../../utils/roles'
-import { formatCurrency, formatDate, formatRelativeTime } from '@shared/utils/format'
+import { formatCurrency, formatDate, formatDateTime, formatRelativeTime } from '@shared/utils/format'
 import {
   PROJECT_STATUS_LABELS,
   PROJECT_STATUS_TONES,
@@ -24,9 +24,59 @@ import {
 
 const MESSAGE_SELECT = `
   id, body, project_id, sender_id, sender_role, recipient_role, is_read, read_at, created_at,
+  attachment_path, attachment_name, attachment_type, attachment_size,
   sender:profiles!messages_sender_id_fkey(full_name),
   project:projects(id, project_code, title)
 `
+
+const ATTACHMENT_BUCKET = 'message-attachments'
+// Matches the bucket's file_size_limit (20260926100000_message_file_attachments.sql).
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
+
+// Accounts created without a full name get their email as full_name (see
+// handle_new_auth_user in the initial schema), so drop the "@domain" part — the
+// office is already clear from the conversation itself.
+function senderDisplayName(message) {
+  const name = message.sender?.full_name?.trim()
+  if (!name) return ROLE_LABELS[message.sender_role]
+  return name.includes('@') ? name.split('@')[0] : name
+}
+
+// Local calendar day, so the "Today"/"Yesterday" separators follow the
+// viewer's clock rather than UTC.
+function dayKey(value) {
+  const date = new Date(value)
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`
+}
+
+function formatDayLabel(value) {
+  const today = new Date()
+  const yesterday = new Date(today)
+  yesterday.setDate(today.getDate() - 1)
+  if (dayKey(value) === dayKey(today)) return 'Today'
+  if (dayKey(value) === dayKey(yesterday)) return 'Yesterday'
+  return new Date(value).toLocaleDateString('en-PH', {
+    weekday: 'short',
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  })
+}
+
+function formatMessageTime(value) {
+  return new Date(value).toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' })
+}
+
+function isImageType(type) {
+  return typeof type === 'string' && type.startsWith('image/')
+}
+
+function formatFileSize(bytes) {
+  if (bytes == null) return ''
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
 
 // Office-to-office messaging: a "conversation" is every message row touching
 // my role on either side (sender_role or recipient_role) — there are only
@@ -63,6 +113,7 @@ export default function Messaging() {
     setDraft(composerDraftKey ? (readDraft(composerDraftKey) ?? '') : '')
   }, [composerDraftKey])
   const [attachedProject, setAttachedProject] = useState(null)
+  const [attachedFile, setAttachedFile] = useState(null)
   const [projectPanel, setProjectPanel] = useState(null)
   const [projectPanelLoading, setProjectPanelLoading] = useState(false)
 
@@ -183,9 +234,33 @@ export default function Messaging() {
   async function handleSend(event) {
     event.preventDefault()
     const trimmed = draft.trim()
-    if (!trimmed || !selectedRole || sending) return
+    if ((!trimmed && !attachedFile) || !selectedRole || sending) return
 
     setSending(true)
+
+    // The file goes up first so the message row never points at nothing.
+    // The path is <sender office>/<recipient office>/..., which is what the
+    // bucket's policies key read access off.
+    let attachment = null
+    if (attachedFile) {
+      const safeName = attachedFile.name.replace(/[^\w.-]+/g, '_')
+      const path = `${role}/${selectedRole}/${crypto.randomUUID()}-${safeName}`
+      const { error: uploadError } = await supabase.storage
+        .from(ATTACHMENT_BUCKET)
+        .upload(path, attachedFile, { contentType: attachedFile.type || undefined })
+      if (uploadError) {
+        toast.error('Could not upload the file', uploadError.message)
+        setSending(false)
+        return
+      }
+      attachment = {
+        attachment_path: path,
+        attachment_name: attachedFile.name,
+        attachment_type: attachedFile.type || null,
+        attachment_size: attachedFile.size,
+      }
+    }
+
     const { data: inserted, error } = await supabase
       .from('messages')
       .insert({
@@ -194,11 +269,13 @@ export default function Messaging() {
         recipient_role: selectedRole,
         project_id: attachedProject?.id ?? null,
         body: trimmed,
+        ...attachment,
       })
       .select(MESSAGE_SELECT)
       .single()
 
     if (error || !inserted) {
+      if (attachment) supabase.storage.from(ATTACHMENT_BUCKET).remove([attachment.attachment_path])
       toast.error('Could not send message', error?.message)
       setSending(false)
       return
@@ -207,7 +284,10 @@ export default function Messaging() {
     setMessages((current) => [...current, inserted])
     setDraft('')
     setAttachedProject(null)
+    setAttachedFile(null)
     setSending(false)
+
+    const preview = trimmed || `Sent a file: ${inserted.attachment_name}`
 
     const { data: recipients, error: recipientsError } = await supabase
       .from('profiles')
@@ -224,7 +304,7 @@ export default function Messaging() {
           sender_id: user.id,
           category: 'NEW_MESSAGE',
           title: `New message from ${ROLE_LABELS[role]}`,
-          message: trimmed.length > 140 ? `${trimmed.slice(0, 140)}…` : trimmed,
+          message: preview.length > 140 ? `${preview.slice(0, 140)}…` : preview,
           related_project_id: attachedProject?.id ?? null,
           related_message_id: inserted.id,
         })),
@@ -238,11 +318,35 @@ export default function Messaging() {
         p_entity_type: 'message',
         p_entity_id: inserted.id,
         p_description: `Message sent to ${ROLE_LABELS[selectedRole]}`,
-        p_metadata: { recipient_role: selectedRole, project_id: attachedProject?.id ?? null },
+        p_metadata: {
+          recipient_role: selectedRole,
+          project_id: inserted.project_id ?? null,
+          attachment_name: inserted.attachment_name ?? null,
+        },
       })
       .then(({ error }) => {
         if (error) console.error('write_audit_log failed', error)
       })
+  }
+
+  function pickFile(file) {
+    if (!file) return
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      toast.error('File is too large', `Files can be up to ${formatFileSize(MAX_ATTACHMENT_BYTES)}.`)
+      return
+    }
+    setAttachedFile(file)
+  }
+
+  async function openAttachment(message) {
+    const { data, error } = await supabase.storage
+      .from(ATTACHMENT_BUCKET)
+      .createSignedUrl(message.attachment_path, 300)
+    if (error || !data?.signedUrl) {
+      toast.error('Could not open the file', error?.message)
+      return
+    }
+    window.open(data.signedUrl, '_blank', 'noopener')
   }
 
   async function openProjectPanel(projectId) {
@@ -271,7 +375,6 @@ export default function Messaging() {
     <div>
       <PageHeader
         title="Messages"
-        description="Send and receive messages with the other offices and the admin."
         breadcrumbs={[{ label: 'Dashboard', to: ROLE_HOME_PATH[role] }, { label: 'Messages' }]}
       />
 
@@ -299,6 +402,10 @@ export default function Messaging() {
             attachedProject={attachedProject}
             onAttach={setAttachedProject}
             onClearAttach={() => setAttachedProject(null)}
+            attachedFile={attachedFile}
+            onPickFile={pickFile}
+            onClearFile={() => setAttachedFile(null)}
+            onOpenAttachment={openAttachment}
             attachPopover={attachPopover}
             onOpenProject={openProjectPanel}
             threadEndRef={threadEndRef}
@@ -355,7 +462,7 @@ function ConversationList({ buckets, selectedRole, onSelect, myUserId, className
                   <span className="flex items-center justify-between gap-2">
                     <span className="truncate text-xs text-slate-500">
                       {lastItem
-                        ? `${lastItem.sender_id === myUserId ? 'You: ' : ''}${lastItem.body}`
+                        ? `${lastItem.sender_id === myUserId ? 'You: ' : ''}${lastItem.body || `📎 ${lastItem.attachment_name}`}`
                         : 'No messages yet'}
                     </span>
                     {bucket.unread > 0 ? (
@@ -386,11 +493,18 @@ function Thread({
   attachedProject,
   onAttach,
   onClearAttach,
+  attachedFile,
+  onPickFile,
+  onClearFile,
+  onOpenAttachment,
   attachPopover,
   onOpenProject,
   threadEndRef,
   className,
 }) {
+  const fileInputRef = useRef(null)
+  const [viewingImage, setViewingImage] = useState(null)
+
   if (!selectedRole) {
     return (
       <div className={`${className} h-[70vh] items-center justify-center rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60`}>
@@ -421,34 +535,83 @@ function Thread({
 
       <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
         {bucket?.items.length ? (
-          bucket.items.map((message) => {
+          bucket.items.map((message, index) => {
+            const previous = bucket.items[index - 1]
+            const startsNewDay = !previous || dayKey(previous.created_at) !== dayKey(message.created_at)
             const isMine = message.sender_role === role
+            const hasImage = message.attachment_path && isImageType(message.attachment_type)
+            const hasFile = message.attachment_path && !hasImage
+            // Images sit on their own with no bubble behind them; the bubble
+            // only wraps text, file and project content.
+            const hasBubble = Boolean(message.body || hasFile || message.project)
             return (
-              <div key={message.id} className={`flex ${isMine ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[80%] rounded-2xl px-3.5 py-2.5 shadow-sm ${isMine ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-800'}`}>
-                  <p className={`text-xs font-medium ${isMine ? 'text-blue-100' : 'text-slate-500'}`}>
-                    {message.sender?.full_name ?? ROLE_LABELS[message.sender_role]}
-                  </p>
-                  <p className="mt-0.5 whitespace-pre-wrap break-words text-sm">{message.body}</p>
-                  {message.project ? (
-                    <button
-                      type="button"
-                      onClick={() => onOpenProject(message.project.id)}
-                      className={`mt-2 flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-xs font-medium transition-colors ${
-                        isMine ? 'bg-blue-700/60 text-white hover:bg-blue-700' : 'bg-white text-blue-700 hover:bg-blue-50'
-                      }`}
-                    >
-                      <FolderKanban className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                      <span className="truncate">
-                        {message.project.project_code} — {message.project.title}
-                      </span>
-                    </button>
-                  ) : null}
-                  <p className={`mt-1 text-right text-[10px] ${isMine ? 'text-blue-100' : 'text-slate-400'}`}>
-                    {formatRelativeTime(message.created_at)}
-                  </p>
+              <Fragment key={message.id}>
+              {startsNewDay ? (
+                <div className="flex items-center gap-3 py-1" role="separator">
+                  <span className="h-px flex-1 bg-slate-200" />
+                  <span className="text-[11px] font-medium text-slate-400">{formatDayLabel(message.created_at)}</span>
+                  <span className="h-px flex-1 bg-slate-200" />
                 </div>
+              ) : null}
+              <div className={`flex flex-col ${isMine ? 'items-end' : 'items-start'}`}>
+                <p className="mb-1 px-1 text-xs font-medium text-slate-500">
+                  {senderDisplayName(message)}
+                </p>
+                <div className={`flex max-w-[80%] flex-col gap-1.5 ${isMine ? 'items-end' : 'items-start'}`}>
+                  {hasImage ? (
+                    <MessageImage
+                      message={message}
+                      onView={setViewingImage}
+                      onLoad={() => threadEndRef.current?.scrollIntoView({ block: 'end' })}
+                    />
+                  ) : null}
+                  {hasBubble ? (
+                    <div className={`rounded-2xl px-3.5 py-2.5 shadow-sm ${isMine ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-800'}`}>
+                      {message.body ? (
+                        <p className="whitespace-pre-wrap break-words text-sm">{message.body}</p>
+                      ) : null}
+                      {hasFile ? (
+                        <button
+                          type="button"
+                          onClick={() => onOpenAttachment(message)}
+                          title="Open file"
+                          className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs font-medium transition-colors ${message.body ? 'mt-2' : ''} ${
+                            isMine ? 'bg-blue-700/60 text-white hover:bg-blue-700' : 'bg-white text-blue-700 hover:bg-blue-50'
+                          }`}
+                        >
+                          <FileText className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                          <span className="min-w-0 flex-1 truncate">{message.attachment_name}</span>
+                          <span className={`shrink-0 text-[10px] ${isMine ? 'text-blue-100' : 'text-slate-400'}`}>
+                            {formatFileSize(message.attachment_size)}
+                          </span>
+                        </button>
+                      ) : null}
+                      {message.project ? (
+                        <button
+                          type="button"
+                          onClick={() => onOpenProject(message.project.id)}
+                          className={`flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-xs font-medium transition-colors ${message.body || hasFile ? 'mt-2' : ''} ${
+                            isMine ? 'bg-blue-700/60 text-white hover:bg-blue-700' : 'bg-white text-blue-700 hover:bg-blue-50'
+                          }`}
+                        >
+                          <FolderKanban className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                          <span className="truncate">
+                            {message.project.project_code} — {message.project.title}
+                          </span>
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+                <time
+                  dateTime={message.created_at}
+                  title={formatDateTime(message.created_at)}
+                  className="mt-1 px-1 text-[10px] text-slate-400"
+                >
+                  {formatMessageTime(message.created_at)}
+                </time>
               </div>
+              </Fragment>
             )
           })
         ) : (
@@ -479,13 +642,44 @@ function Thread({
           </div>
         ) : null}
 
+        {attachedFile ? (
+          <div className="mb-2 flex items-center gap-2 rounded-lg bg-blue-50 px-2.5 py-1.5 text-xs text-blue-700">
+            {isImageType(attachedFile.type) ? (
+              <LocalImageThumb file={attachedFile} />
+            ) : (
+              <FileText className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            )}
+            <span className="min-w-0 flex-1 truncate">{attachedFile.name}</span>
+            <span className="shrink-0 text-[11px] text-blue-500">{formatFileSize(attachedFile.size)}</span>
+            <button
+              type="button"
+              onClick={onClearFile}
+              aria-label="Remove attached file"
+              className="rounded p-0.5 hover:bg-blue-100"
+            >
+              <X className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+          </div>
+        ) : null}
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          className="hidden"
+          onChange={(event) => {
+            onPickFile(event.target.files?.[0])
+            // Reset so picking the same file again still fires onChange.
+            event.target.value = ''
+          }}
+        />
+
         <div className="flex items-end gap-2">
           <div className="relative" ref={attachPopover.containerRef}>
             <button
               type="button"
               onClick={() => attachPopover.setOpen((value) => !value)}
-              aria-label="Attach a project"
-              title="Attach a project"
+              aria-label="Attach a file or project"
+              title="Attach a file or project"
               className="rounded-md p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
             >
               <Paperclip className="h-4 w-4" aria-hidden="true" />
@@ -495,6 +689,10 @@ function Thread({
                 onPick={(project) => {
                   onAttach(project)
                   attachPopover.close()
+                }}
+                onBrowseFiles={() => {
+                  attachPopover.close()
+                  fileInputRef.current?.click()
                 }}
               />
             ) : null}
@@ -516,7 +714,7 @@ function Thread({
 
           <button
             type="submit"
-            disabled={!draft.trim() || sending}
+            disabled={(!draft.trim() && !attachedFile) || sending}
             aria-label="Send message"
             className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-linear-to-r from-blue-700 to-blue-600 text-white shadow-sm shadow-blue-700/30 transition-all hover:from-blue-800 hover:to-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
@@ -524,11 +722,137 @@ function Thread({
           </button>
         </div>
       </form>
+
+      {viewingImage
+        ? createPortal(
+            <ImageViewer image={viewingImage} onClose={() => setViewingImage(null)} />,
+            document.body,
+          )
+        : null}
     </div>
   )
 }
 
-function ProjectPicker({ onPick }) {
+// Signed URLs keyed by storage path, so a message list reload (every
+// realtime event refetches the whole thread) doesn't re-sign every image.
+const signedImageUrls = new Map()
+const SIGNED_IMAGE_TTL_SECONDS = 3600
+
+async function getSignedImageUrl(path) {
+  const cached = signedImageUrls.get(path)
+  // Re-sign a minute early so an image opened just before expiry still loads.
+  if (cached && cached.expiresAt - 60_000 > Date.now()) return cached.url
+
+  const { data, error } = await supabase.storage
+    .from(ATTACHMENT_BUCKET)
+    .createSignedUrl(path, SIGNED_IMAGE_TTL_SECONDS)
+  if (error || !data?.signedUrl) return null
+
+  signedImageUrls.set(path, { url: data.signedUrl, expiresAt: Date.now() + SIGNED_IMAGE_TTL_SECONDS * 1000 })
+  return data.signedUrl
+}
+
+function MessageImage({ message, onView, onLoad }) {
+  const [url, setUrl] = useState(null)
+  const [failed, setFailed] = useState(false)
+
+  useEffect(() => {
+    let active = true
+    getSignedImageUrl(message.attachment_path).then((signed) => {
+      if (!active) return
+      if (signed) setUrl(signed)
+      else setFailed(true)
+    })
+    return () => {
+      active = false
+    }
+  }, [message.attachment_path])
+
+  if (failed) {
+    return (
+      <p className="rounded-2xl border border-dashed border-slate-300 px-3 py-2 text-xs text-slate-500">
+        Could not load image: {message.attachment_name}
+      </p>
+    )
+  }
+
+  if (!url) {
+    return <div className="h-48 w-60 max-w-full animate-pulse rounded-2xl bg-slate-100" />
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => onView({ url, name: message.attachment_name })}
+      title="View image"
+      className="block overflow-hidden rounded-2xl border border-slate-200 transition-opacity hover:opacity-90"
+    >
+      <img
+        src={url}
+        alt={message.attachment_name ?? 'Attached image'}
+        onLoad={onLoad}
+        onError={() => setFailed(true)}
+        className="block max-h-72 w-auto max-w-full object-cover"
+      />
+    </button>
+  )
+}
+
+function LocalImageThumb({ file }) {
+  const [url, setUrl] = useState(null)
+
+  useEffect(() => {
+    const objectUrl = URL.createObjectURL(file)
+    setUrl(objectUrl)
+    return () => URL.revokeObjectURL(objectUrl)
+  }, [file])
+
+  return url ? <img src={url} alt="" className="h-10 w-10 shrink-0 rounded object-cover" /> : null
+}
+
+function ImageViewer({ image, onClose }) {
+  useEffect(() => {
+    function handleKey(event) {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [onClose])
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <button type="button" aria-label="Close image" onClick={onClose} className="fixed inset-0 bg-slate-900/80" />
+      <div role="dialog" aria-modal="true" aria-label={image.name} className="relative flex max-h-full max-w-full flex-col items-center gap-2">
+        <div className="flex w-full items-center justify-between gap-3 text-sm text-white">
+          <span className="min-w-0 truncate">{image.name}</span>
+          <span className="flex shrink-0 items-center gap-1">
+            <a
+              href={image.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Open in new tab"
+              title="Open in new tab"
+              className="rounded-md p-1.5 hover:bg-white/15"
+            >
+              <ExternalLink className="h-4 w-4" aria-hidden="true" />
+            </a>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              className="rounded-md p-1.5 hover:bg-white/15"
+            >
+              <X className="h-4 w-4" aria-hidden="true" />
+            </button>
+          </span>
+        </div>
+        <img src={image.url} alt={image.name} className="max-h-[80vh] max-w-full rounded-lg object-contain shadow-2xl" />
+      </div>
+    </div>
+  )
+}
+
+function ProjectPicker({ onPick, onBrowseFiles }) {
   const [term, setTerm] = useState('')
   const [results, setResults] = useState([])
   const [loading, setLoading] = useState(true)
@@ -559,6 +883,16 @@ function ProjectPicker({ onPick }) {
 
   return (
     <div className="animate-pop-in absolute bottom-full left-0 z-30 mb-2 w-72 rounded-xl border border-slate-200 bg-white p-2 shadow-xl shadow-slate-900/10">
+      <button
+        type="button"
+        onClick={onBrowseFiles}
+        className="mb-2 flex w-full items-center gap-2 rounded-md border border-dashed border-slate-300 px-2.5 py-2 text-left text-xs font-medium text-slate-700 hover:border-blue-400 hover:bg-blue-50 hover:text-blue-700"
+      >
+        <Upload className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        <span className="flex-1">Upload a file from your computer</span>
+        <span className="text-[10px] font-normal text-slate-400">up to 25 MB</span>
+      </button>
+      <p className="mb-1.5 px-1 text-[11px] font-medium uppercase tracking-wide text-slate-400">Or attach a project</p>
       <div className="relative mb-1.5">
         <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" aria-hidden="true" />
         <input

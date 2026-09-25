@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
-import { FileWarning, MapPin, Trash2 } from 'lucide-react'
+import { useParams } from 'react-router-dom'
+import { FileWarning, MapPin, Pencil } from 'lucide-react'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
-import { useConfirm } from '../../hooks/useConfirm'
 import PageHeader from '../../components/ui/PageHeader'
 import Button from '../../components/ui/Button'
 import Badge from '@shared/components/ui/Badge'
@@ -11,6 +10,7 @@ import { LoadingState } from '@shared/components/ui/LoadingState'
 import EmptyState from '@shared/components/ui/EmptyState'
 import DssPanel from '../../components/ui/DssPanel'
 import LocationModal from '../../components/LocationModal'
+import EditProjectModal, { DOC_CATEGORY_LABELS } from '../../components/EditProjectModal'
 import SitePhotoGrid from '../../components/ui/SitePhotoGrid'
 import { analyzeProjectImage } from '../../utils/imageAnalysis'
 import { formatCurrency, formatDate, formatDateTime } from '@shared/utils/format'
@@ -18,13 +18,6 @@ import { PROJECT_STATUS_LABELS, PROJECT_STATUS_TONES } from '@shared/utils/proje
 import { evaluateProjectDss } from '@shared/utils/decisionSupport'
 import { isWithinDonsol } from '@shared/utils/geo'
 import { getDocumentViewUrl } from '@shared/utils/documentViewer'
-
-const DOC_CATEGORY_LABELS = {
-  PROGRAM_OF_WORKS: 'Program of Works',
-  PERMIT: 'Permit',
-  DESIGN_PLAN: 'Design Plan',
-  OTHER: 'Other',
-}
 
 function Field({ label, children }) {
   return (
@@ -38,14 +31,14 @@ function Field({ label, children }) {
 // Full read-only audit trail for a single project — every office's
 // contribution (MPDC's creation/submission/decisions, BAC's procurement,
 // Engineering's monitoring updates) in one place, plus the raw
-// status history. Nothing here writes anything; it exists so an admin can
-// see everything happening on a project without cross-referencing three
-// separate office dashboards, e.g. during an incident/breach investigation.
+// status history. It exists so an admin can see everything happening on a
+// project without cross-referencing three separate office dashboards, e.g.
+// during an incident/breach investigation. The only write is the admin's
+// "Edit Project" correction of the project's details and documents
+// (EditProjectModal).
 export default function AdminProjectDetail() {
   const { projectId } = useParams()
-  const navigate = useNavigate()
   const toast = useToast()
-  const confirm = useConfirm()
 
   const [project, setProject] = useState(null)
   const [submissions, setSubmissions] = useState([])
@@ -58,7 +51,7 @@ export default function AdminProjectDetail() {
   const [retryingImageId, setRetryingImageId] = useState(null)
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
-  const [deleting, setDeleting] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
   const [locationOpen, setLocationOpen] = useState(false)
 
   async function loadData() {
@@ -77,7 +70,7 @@ export default function AdminProjectDetail() {
       supabase
         .from('projects')
         .select(
-          `id, project_code, title, description, project_category, barangay, location_text,
+          `id, project_code, title, description, project_category, sector, barangay, location_text,
            latitude, longitude, estimated_cost, approved_budget, funding_source,
            pow_amount, pow_date,
            start_date_planned, end_date_planned, start_date_actual, end_date_actual,
@@ -205,28 +198,6 @@ export default function AdminProjectDetail() {
     window.open(getDocumentViewUrl(data.signedUrl, doc.file_name), '_blank', 'noopener,noreferrer')
   }
 
-  async function handleDelete() {
-    const confirmed = await confirm({
-      title: 'Delete this project?',
-      description: `${project.project_code} — "${project.title}" will be permanently deleted, along with all its submissions, review decisions, endorsements, monitoring updates, photos, documents, and procurement records. This cannot be undone.`,
-      tone: 'danger',
-      confirmLabel: 'Delete Project',
-    })
-    if (!confirmed) return
-
-    setDeleting(true)
-    const { error } = await supabase.from('projects').delete().eq('id', project.id)
-    setDeleting(false)
-
-    if (error) {
-      toast.error('Could not delete project', error.message)
-      return
-    }
-
-    toast.success('Project deleted', `${project.project_code} has been permanently deleted.`)
-    navigate('/admin/projects')
-  }
-
   if (loading) {
     return <LoadingState label="Loading project..." />
   }
@@ -262,8 +233,8 @@ export default function AdminProjectDetail() {
             <Badge tone={PROJECT_STATUS_TONES[project.status]}>
               {PROJECT_STATUS_LABELS[project.status] ?? project.status}
             </Badge>
-            <Button variant="danger" size="sm" icon={Trash2} onClick={handleDelete} loading={deleting}>
-              Delete Project
+            <Button size="sm" icon={Pencil} onClick={() => setEditOpen(true)}>
+              Edit Project
             </Button>
           </div>
         }
@@ -473,6 +444,16 @@ export default function AdminProjectDetail() {
       </div>
 
       <LocationModal open={locationOpen} project={project} onClose={() => setLocationOpen(false)} />
+      <EditProjectModal
+        open={editOpen}
+        project={project}
+        documents={documents}
+        onClose={() => setEditOpen(false)}
+        onSaved={() => {
+          setEditOpen(false)
+          loadData()
+        }}
+      />
     </div>
   )
 }

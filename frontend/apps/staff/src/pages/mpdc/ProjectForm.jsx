@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ChevronDown, FileWarning, Save, Send } from 'lucide-react'
+import { ChevronDown, FileWarning, MapPin, Save, Send } from 'lucide-react'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
 import { useConfirm } from '../../hooks/useConfirm'
@@ -18,7 +18,7 @@ import { formatCurrency, formatDate, formatDateTime } from '@shared/utils/format
 import { PROJECT_STATUS_LABELS, PROJECT_STATUS_TONES, SECTOR_LABELS } from '@shared/utils/projectStatus'
 import { DONSOL_BARANGAYS } from '@shared/utils/barangays'
 import { DONSOL_BARANGAY_CENTROIDS } from '@shared/utils/barangayCentroids'
-import ProjectMap from '@shared/components/ProjectMap'
+import LocationModal from '../../components/LocationModal'
 
 const inputClass =
   'w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500'
@@ -94,6 +94,7 @@ export default function ProjectForm() {
 
   const [endorsementNotes, setEndorsementNotes] = useState('')
   const [endorsing, setEndorsing] = useState(false)
+  const [locationOpen, setLocationOpen] = useState(false)
 
   const barangayPopover = useDismissablePopover()
   const barangayTriggerRef = useRef(null)
@@ -710,29 +711,36 @@ export default function ProjectForm() {
                 className={inputClass}
               />
             </div>
+          </fieldset>
 
-            {form.latitude !== '' && form.longitude !== '' ? (
-              <div className="sm:col-span-2">
-                <p className="mb-1 block text-sm font-medium text-slate-700">Location Preview</p>
-                <p className="mb-2 text-xs text-slate-400">
-                  Pinned automatically at Barangay {form.barangay}'s location — not editable directly. Use the
-                  Location field above for the specific purok/sitio/landmark.
-                </p>
-                <ProjectMap
-                  projects={[
-                    {
-                      id: 'preview',
-                      title: form.title || 'This project',
-                      status: 'DRAFT',
-                      latitude: form.latitude,
-                      longitude: form.longitude,
-                    },
-                  ]}
-                  height="220px"
-                />
-              </div>
-            ) : null}
+          {/* Outside the fieldset on purpose: a disabled fieldset disables every
+              button inside it, and See Location must still work once the
+              project is no longer editable. */}
+          {form.latitude !== '' && form.longitude !== '' ? (
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <Button type="button" variant="secondary" size="sm" icon={MapPin} onClick={() => setLocationOpen(true)}>
+                See Location
+              </Button>
+              <p className="text-xs text-slate-400">
+                Pinned automatically at Barangay {form.barangay}'s location.
+              </p>
+              <LocationModal
+                open={locationOpen}
+                project={{
+                  id: 'preview',
+                  title: form.title || 'This project',
+                  project_code: project?.project_code ?? 'New project',
+                  barangay: form.barangay,
+                  status: project?.status ?? 'DRAFT',
+                  latitude: form.latitude,
+                  longitude: form.longitude,
+                }}
+                onClose={() => setLocationOpen(false)}
+              />
+            </div>
+          ) : null}
 
+          <fieldset disabled={!editable} className="mt-4 grid gap-4 sm:grid-cols-2">
             <div>
               <label htmlFor="estimated_cost" className="mb-1 block text-sm font-medium text-slate-700">
                 Estimated Budget (PHP) *
@@ -941,8 +949,7 @@ function SubmitForReviewModal({ open, notes, onNotesChange, onCancel, onConfirm,
 
   return createPortal(
     // z-1100: same reasoning as ConfirmDialog.jsx — stays above Leaflet's
-    // internal max (z-index:1000) so this never renders behind this page's
-    // own inline Location Preview map.
+    // internal max (z-index:1000) so this never renders behind a Leaflet map.
     <div className="fixed inset-0 z-1100 flex items-center justify-center px-4">
       <button
         type="button"

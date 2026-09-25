@@ -1,6 +1,13 @@
 @import "tailwindcss";
 
 /*
+ * Each app's vite root is its own folder (frontend/apps/<app>), which is all
+ * Tailwind scans by default — so a class used only in shared/src (e.g.
+ * ProjectMap's details card) silently generated no CSS. Scan shared too.
+ */
+@source "..";
+
+/*
  * Brand palette pulled from the LGU Donsol seal: the navy ring, the gold
  * stars/sun rays, and the shield red. Overriding Tailwind's `blue` scale
  * (rather than adding a parallel one) means every existing `blue-*` class
