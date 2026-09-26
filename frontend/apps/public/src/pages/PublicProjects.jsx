@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { FolderKanban, Search, X } from 'lucide-react'
+import { ChevronRight, FolderKanban, Search, X } from 'lucide-react'
 import { supabase } from '@shared/lib/supabaseClient'
 import { formatCurrency, formatDate } from '@shared/utils/format'
 import { PROJECT_STATUS_LABELS, PROJECT_STATUS_TONES } from '@shared/utils/projectStatus'
@@ -108,50 +108,123 @@ export default function PublicProjects() {
             }
           />
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-left text-sm">
-              <thead>
-                <tr className="bg-slate-50">
-                  <th className="border border-slate-300 px-3 py-2 font-semibold text-slate-700">Project Name</th>
-                  <th className="border border-slate-300 px-3 py-2 font-semibold text-slate-700">Code</th>
-                  <th className="border border-slate-300 px-3 py-2 font-semibold text-slate-700">Location</th>
-                  <th className="border border-slate-300 px-3 py-2 font-semibold text-slate-700">Approved Budget</th>
-                  <th className="border border-slate-300 px-3 py-2 font-semibold text-slate-700">Fund Source</th>
-                  <th className="border border-slate-300 px-3 py-2 font-semibold text-slate-700">Target Start</th>
-                  <th className="border border-slate-300 px-3 py-2 font-semibold text-slate-700">Target Completion</th>
-                  <th className="border border-slate-300 px-3 py-2 font-semibold text-slate-700">Status</th>
-                  <th className="border border-slate-300 px-3 py-2 font-semibold text-slate-700">Date Completed</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((project) => (
-                  <tr
-                    key={project.id}
+          <>
+            <p className="mb-3 text-xs text-slate-500">
+              Showing <span className="font-medium text-slate-700">{filtered.length}</span>{' '}
+              {filtered.length === 1 ? 'project' : 'projects'}
+            </p>
+
+            {/* Below laptop width, one card per project — nine table columns can't fit
+                a phone or tablet screen without sideways scrolling. */}
+            <ul className="grid gap-3 sm:grid-cols-2 lg:hidden">
+              {filtered.map((project) => (
+                <li key={project.id}>
+                  <button
+                    type="button"
                     onClick={() => setSelected(project)}
-                    className="cursor-pointer odd:bg-white even:bg-slate-50/50 hover:bg-blue-50/60"
+                    className="flex h-full w-full flex-col rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm hover:border-blue-300 hover:bg-blue-50/40"
                   >
-                    <td className="border border-slate-300 px-3 py-2 font-medium text-slate-800">{project.title}</td>
-                    <td className="border border-slate-300 px-3 py-2 text-slate-600">{project.project_code}</td>
-                    <td className="border border-slate-300 px-3 py-2 text-slate-600">{project.barangay || '—'}</td>
-                    <td className="border border-slate-300 px-3 py-2 text-slate-600">
-                      {formatCurrency(project.approved_budget ?? project.estimated_cost)}
-                    </td>
-                    <td className="border border-slate-300 px-3 py-2 text-slate-600">{project.funding_source || '—'}</td>
-                    <td className="border border-slate-300 px-3 py-2 text-slate-600">{formatDate(project.start_date_planned)}</td>
-                    <td className="border border-slate-300 px-3 py-2 text-slate-600">{formatDate(project.end_date_planned)}</td>
-                    <td className="border border-slate-300 px-3 py-2">
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="font-medium text-slate-800">{project.title}</p>
                       <Badge tone={PROJECT_STATUS_TONES[project.status]}>
                         {PROJECT_STATUS_LABELS[project.status] ?? project.status}
                       </Badge>
-                    </td>
-                    <td className="border border-slate-300 px-3 py-2 text-slate-600">
-                      {project.status === 'COMPLETED' ? formatDate(project.end_date_actual) : '—'}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                    </div>
+                    <p className="mt-0.5 text-xs text-slate-500">
+                      {project.project_code}
+                      {project.barangay ? ` · Brgy. ${project.barangay}` : ''}
+                    </p>
+                    <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
+                      <div>
+                        <dt className="text-xs text-slate-400">Approved Budget</dt>
+                        <dd className="text-slate-700">{formatCurrency(project.approved_budget ?? project.estimated_cost)}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs text-slate-400">Fund Source</dt>
+                        <dd className="text-slate-700">{project.funding_source || '—'}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs text-slate-400">Target Start</dt>
+                        <dd className="text-slate-700">{formatDate(project.start_date_planned)}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs text-slate-400">
+                          {project.status === 'COMPLETED' ? 'Date Completed' : 'Target Completion'}
+                        </dt>
+                        <dd className="text-slate-700">
+                          {formatDate(project.status === 'COMPLETED' ? project.end_date_actual : project.end_date_planned)}
+                        </dd>
+                      </div>
+                    </dl>
+                  </button>
+                </li>
+              ))}
+            </ul>
+
+            <div className="hidden overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm lg:block">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-linear-to-r from-blue-800 to-blue-600">
+                    <tr className="divide-x divide-white/20">
+                      <th scope="col" className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-white/90">Project</th>
+                      <th scope="col" className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-white/90">Location</th>
+                      <th scope="col" className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-white/90">Approved Budget</th>
+                      <th scope="col" className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-white/90">Fund Source</th>
+                      <th scope="col" className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-white/90">Schedule</th>
+                      <th scope="col" className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-white/90">Status</th>
+                      <th scope="col" className="w-10 px-2 py-3"><span className="sr-only">Open</span></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-300">
+                    {filtered.map((project) => (
+                      <tr
+                        key={project.id}
+                        tabIndex={0}
+                        onClick={() => setSelected(project)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault()
+                            setSelected(project)
+                          }
+                        }}
+                        className="group cursor-pointer divide-x divide-slate-300 transition-colors hover:bg-blue-50/50 focus:bg-blue-50/50 focus:outline-none"
+                      >
+                        <td className="px-4 py-3">
+                          <p className="font-medium text-slate-800 group-hover:text-blue-700">{project.title}</p>
+                          <p className="mt-0.5 text-xs text-slate-400">{project.project_code}</p>
+                        </td>
+                        <td className="px-4 py-3 text-slate-600">{project.barangay || '—'}</td>
+                        <td className="px-4 py-3 whitespace-nowrap text-right font-medium tabular-nums text-slate-700">
+                          {formatCurrency(project.approved_budget ?? project.estimated_cost)}
+                        </td>
+                        <td className="px-4 py-3 text-slate-600">{project.funding_source || '—'}</td>
+                        <td className="px-4 py-3 whitespace-nowrap text-slate-600">
+                          <p>
+                            {formatDate(project.start_date_planned)}
+                            <span className="mx-1.5 text-slate-300">→</span>
+                            {formatDate(project.end_date_planned)}
+                          </p>
+                          {project.status === 'COMPLETED' ? (
+                            <p className="mt-0.5 text-xs text-emerald-600">
+                              Completed {formatDate(project.end_date_actual)}
+                            </p>
+                          ) : null}
+                        </td>
+                        <td className="px-4 py-3">
+                          <Badge tone={PROJECT_STATUS_TONES[project.status]}>
+                            {PROJECT_STATUS_LABELS[project.status] ?? project.status}
+                          </Badge>
+                        </td>
+                        <td className="px-2 py-3 text-slate-300 group-hover:text-blue-500">
+                          <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
         )}
       </div>
 

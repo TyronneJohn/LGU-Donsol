@@ -35,7 +35,7 @@ export default function LocationModal({ open, project, onClose }) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="location-modal-title"
-        className="animate-pop-in relative w-full max-w-2xl rounded-2xl bg-white p-5 shadow-2xl ring-1 ring-slate-900/5"
+        className="animate-pop-in relative max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl ring-1 ring-slate-900/5"
       >
         <div className="mb-3 flex items-start justify-between gap-3">
           <div>
@@ -65,7 +65,7 @@ export default function LocationModal({ open, project, onClose }) {
           </button>
         </div>
 
-        <ProjectMap projects={[project]} height="420px" />
+        <ProjectMap projects={[project]} height="min(420px, 60vh)" />
       </div>
     </div>,
     document.body,

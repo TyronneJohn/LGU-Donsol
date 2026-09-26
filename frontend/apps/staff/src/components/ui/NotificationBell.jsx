@@ -112,7 +112,7 @@ export default function NotificationBell() {
         <div
           role="menu"
           aria-label="Notifications"
-          className="animate-pop-in absolute right-0 z-30 mt-2 w-80 origin-top-right rounded-xl border border-slate-200 bg-white p-3 shadow-xl shadow-slate-900/10 sm:w-96"
+          className="animate-pop-in fixed inset-x-4 top-16 z-30 origin-top rounded-xl border border-slate-200 bg-white p-3 shadow-xl shadow-slate-900/10 sm:absolute sm:inset-x-auto sm:top-auto sm:right-0 sm:mt-2 sm:w-96 sm:origin-top-right"
         >
           <div className="flex items-center justify-between px-1 pb-2">
             <p className="text-sm font-semibold text-slate-800">Notifications</p>
@@ -136,7 +136,7 @@ export default function NotificationBell() {
               bordered={false}
             />
           ) : (
-            <ul className="max-h-96 space-y-0.5 overflow-y-auto">
+            <ul className="max-h-[60vh] space-y-0.5 overflow-y-auto sm:max-h-96">
               {notifications.map((notification) => (
                 <li key={notification.id}>
                   <button

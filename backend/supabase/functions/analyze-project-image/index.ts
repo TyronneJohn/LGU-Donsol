@@ -30,6 +30,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 const GEMINI_MODEL = 'gemini-3.5-flash'
 const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`
 const GEMINI_TIMEOUT_MS = 30000
+const GEMINI_RETRY_DELAYS_MS = [2000, 5000]
 
 // Independent server-side ceiling — must not simply trust the browser, which
 // already enforces the same limit in src/utils/imageProcessing.js.
@@ -284,59 +285,82 @@ Deno.serve(async (req) => {
       location: project?.location_text ?? null,
     })
 
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS)
-
-    let geminiResponse: Response
-    try {
-      geminiResponse = await fetch(GEMINI_API_URL, {
-        method: 'POST',
-        signal: controller.signal,
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data: toBase64(bytes) } }],
-            },
-          ],
-          generationConfig: {
-            temperature: 0.2,
-            // The analysis itself is short, but this ceiling is shared with
-            // whatever reasoning the model does before emitting it — at 1024
-            // a thinking model can spend the budget and get cut off partway
-            // through the JSON, which arrives here as a parse failure.
-            maxOutputTokens: 4096,
-            responseMimeType: 'application/json',
-            responseSchema: {
-              type: 'OBJECT',
-              properties: {
-                observed_activity: { type: 'STRING' },
-                visible_materials: { type: 'ARRAY', items: { type: 'STRING' } },
-                site_condition: { type: 'STRING' },
-                potential_issues: { type: 'ARRAY', items: { type: 'STRING' } },
-                image_quality: { type: 'STRING' },
-                confidence: { type: 'NUMBER' },
-                observation: { type: 'STRING' },
-              },
-              required: [
-                'observed_activity',
-                'visible_materials',
-                'site_condition',
-                'potential_issues',
-                'image_quality',
-                'confidence',
-                'observation',
-              ],
-            },
+    const requestBody = JSON.stringify({
+      contents: [
+        {
+          parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data: toBase64(bytes) } }],
+        },
+      ],
+      generationConfig: {
+        temperature: 0.2,
+        // The analysis itself is short, but this ceiling is shared with
+        // whatever reasoning the model does before emitting it — at 1024
+        // a thinking model can spend the budget and get cut off partway
+        // through the JSON, which arrives here as a parse failure.
+        maxOutputTokens: 4096,
+        // 3.5 Flash reasons at MEDIUM by default, which is most of the wait
+        // for a short, descriptive answer like this one. LOW keeps some
+        // reasoning for reading the photo while cutting the latency.
+        thinkingConfig: { thinkingLevel: 'LOW' },
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: 'OBJECT',
+          properties: {
+            observed_activity: { type: 'STRING' },
+            visible_materials: { type: 'ARRAY', items: { type: 'STRING' } },
+            site_condition: { type: 'STRING' },
+            potential_issues: { type: 'ARRAY', items: { type: 'STRING' } },
+            image_quality: { type: 'STRING' },
+            confidence: { type: 'NUMBER' },
+            observation: { type: 'STRING' },
           },
-        }),
-      })
-    } catch (fetchError) {
-      const isAbort = fetchError instanceof Error && fetchError.name === 'AbortError'
-      return await markFailed(admin, imageId, isAbort ? 'AI analysis timed out.' : 'Could not reach the Gemini API (network error).')
-    } finally {
-      clearTimeout(timeout)
+          required: [
+            'observed_activity',
+            'visible_materials',
+            'site_condition',
+            'potential_issues',
+            'image_quality',
+            'confidence',
+            'observation',
+          ],
+        },
+      },
+    })
+
+    // Gemini returns 5xx ("model is overloaded") and occasional 429s in
+    // short bursts that clear within seconds. Retrying those — and plain
+    // network drops — a couple of times with backoff turns most of them
+    // into a success instead of a FAILED photo that needs a manual retry.
+    // Timeouts are not retried: another 30 s attempt would risk the Edge
+    // Function's own wall-clock limit.
+    let geminiResponse: Response | null = null
+    for (let attempt = 0; attempt <= GEMINI_RETRY_DELAYS_MS.length; attempt++) {
+      if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, GEMINI_RETRY_DELAYS_MS[attempt - 1]))
+      const isLastAttempt = attempt === GEMINI_RETRY_DELAYS_MS.length
+
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS)
+      try {
+        geminiResponse = await fetch(GEMINI_API_URL, {
+          method: 'POST',
+          signal: controller.signal,
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+          body: requestBody,
+        })
+      } catch (fetchError) {
+        const isAbort = fetchError instanceof Error && fetchError.name === 'AbortError'
+        if (isAbort) return await markFailed(admin, imageId, 'AI analysis timed out.')
+        if (isLastAttempt) return await markFailed(admin, imageId, 'Could not reach the Gemini API (network error).')
+        continue
+      } finally {
+        clearTimeout(timeout)
+      }
+
+      const isTransient = geminiResponse.status === 429 || geminiResponse.status >= 500
+      if (!isTransient || isLastAttempt) break
+      await geminiResponse.body?.cancel()
     }
+    geminiResponse = geminiResponse!
 
     if (!geminiResponse.ok) {
       if (geminiResponse.status === 429) {
@@ -346,7 +370,7 @@ Deno.serve(async (req) => {
         return await markFailed(admin, imageId, 'Gemini API key is invalid or unauthorized.')
       }
       if (geminiResponse.status >= 500) {
-        return await markFailed(admin, imageId, 'Gemini API is temporarily unavailable.')
+        return await markFailed(admin, imageId, `Gemini API is temporarily unavailable (HTTP ${geminiResponse.status}).`)
       }
       return await markFailed(admin, imageId, `Gemini API request failed (HTTP ${geminiResponse.status}).`)
     }
