@@ -1,23 +1,25 @@
--- Puts the budget back where the Local Government Code puts it: MPDC owns the
--- money, Engineering owns the Program of Works.
+-- MPDC owns the approval decision and the budget; Engineering owns the
+-- technical review (Program of Works) and may only recommend.
 --
--- Why this reverses 20260812140000: under RA 7160 the planning and development
--- coordinator prepares the AIP and sits on the Local Finance Committee
--- (Sec. 316, Sec. 476), so the funding source and the allocation are MPDC's to
--- declare. The municipal engineer's deliverable is the POW and its detailed
--- engineering cost estimate (Sec. 477) — which is what GPPB then treats as the
--- basis of the ABC. The system had these swapped: Engineering was the only
--- role that could write approved_budget/funding_source, and MPDC could write
--- neither.
+-- Confirmed with the client (MPDC) during testing: MPDC approves or rejects
+-- projects and declares the allocation and funding source from the AIP.
+-- This matches RA 7160 — the planning and development coordinator prepares
+-- the AIP and sits on the Local Finance Committee (Sec. 316, Sec. 476),
+-- while the municipal engineer's deliverable is the POW and its detailed
+-- cost estimate (Sec. 477), which GPPB treats as the basis of the ABC.
 --
--- Column-wise this is a small change. approved_budget and funding_source keep
--- their names and meaning (the allocation and where it comes from); only the
--- office allowed to write them moves. The POW is new, because nothing on the
--- row previously represented it — the POW *document* could already be uploaded
--- (project_documents.document_category = 'PROGRAM_OF_WORKS'), but its amount
--- had nowhere to live.
+-- Supersedes 20260909100000_mpdc_budget_engineering_pow.sql.hold. That file
+-- was never applied, and it predates 20260928100000_security_fixes.sql,
+-- which redefines guard_project_field_updates() — unholding it in place
+-- would have had its guard silently overwritten. Its content is carried
+-- forward here on top of the security_fixes definition.
 --
--- Still one projects row for the whole lifecycle. No per-office copies.
+-- Workflow after this migration:
+--   MPDC        drafts the project with approved_budget + funding_source,
+--               submits it, then either endorses it to BAC (= approval,
+--               project_endorsements) or rejects it (project_approvals).
+--   Engineering submits the POW, or returns the project to MPDC for
+--               revision with remarks. Engineering can no longer reject.
 
 -- =========================================================================
 -- 1. POW columns. Engineering-written, and the record that their technical
@@ -35,20 +37,20 @@ comment on column public.projects.pow_amount is
   'Total cost in the Engineering Program of Works. Basis of the ABC at procurement (GPPB); written only by Engineering, only during review.';
 
 -- =========================================================================
--- 2. Column-level fence, rewritten from 20260818100000 (the current
---    definition) with the ownership swap applied.
---
---    Engineering: loses approved_budget and funding_source, gains the four
---    pow_* columns. MPDC: keeps approved_budget/funding_source on a draft
---    (they were never in the non-APPROVED forbidden list, so no change is
---    needed there), and is fenced out of pow_* in both branches the same way
---    it is fenced out of the dss_* columns.
+-- 2. Column-level fence. Body is 20260928100000's definition with the
+--    ownership swap applied: Engineering loses approved_budget and
+--    funding_source and gains the four pow_* columns; MPDC is fenced out of
+--    pow_* in both branches the same way it is fenced out of dss_*.
 -- =========================================================================
 create or replace function public.guard_project_field_updates()
 returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
   if coalesce(current_setting('app.dss_internal_write', true), '') = 'true' then
+    return new;
+  end if;
+
+  if coalesce(current_setting('app.auto_publish_internal', true), '') = 'true' then
     return new;
   end if;
 
@@ -61,6 +63,7 @@ begin
       if new.title is distinct from old.title
         or new.description is distinct from old.description
         or new.project_category is distinct from old.project_category
+        or new.sector is distinct from old.sector
         or new.barangay is distinct from old.barangay
         or new.location_text is distinct from old.location_text
         or new.latitude is distinct from old.latitude
@@ -107,6 +110,7 @@ begin
     if new.title is distinct from old.title
       or new.description is distinct from old.description
       or new.project_category is distinct from old.project_category
+      or new.sector is distinct from old.sector
       or new.barangay is distinct from old.barangay
       or new.location_text is distinct from old.location_text
       or new.latitude is distinct from old.latitude
@@ -144,7 +148,9 @@ $$;
 -- =========================================================================
 -- 3. MPDC must supply the allocation before the project can be submitted —
 --    Engineering costs the work against it, so it has to be there first.
---    Same guard as 20260824100000, two fields longer.
+--    estimated_cost is no longer required: projects are encoded after the
+--    Sanggunian has appropriated them, so the approved budget is the only
+--    figure MPDC enters. The column stays for projects encoded before this.
 -- =========================================================================
 create or replace function public.guard_project_submission_completeness()
 returns trigger
@@ -153,7 +159,7 @@ declare
   v_project record;
 begin
   select title, description, project_category, sector, barangay, location_text,
-         estimated_cost, approved_budget, funding_source,
+         approved_budget, funding_source,
          start_date_planned, end_date_planned, office_id
   into v_project
   from public.projects
@@ -165,14 +171,13 @@ begin
     or v_project.sector is null
     or v_project.barangay is null or btrim(v_project.barangay) = ''
     or v_project.location_text is null or btrim(v_project.location_text) = ''
-    or v_project.estimated_cost is null
     or v_project.approved_budget is null
     or v_project.funding_source is null or btrim(v_project.funding_source) = ''
     or v_project.start_date_planned is null
     or v_project.end_date_planned is null
     or v_project.office_id is null
   then
-    raise exception 'Project is missing required fields (name, description, programs/project/activities, category, barangay, location, estimated budget, approved budget, funding source, schedule, or implementing office) and cannot be submitted for review.';
+    raise exception 'Project is missing required fields (name, description, programs/project/activities, category, barangay, location, approved budget, funding source, schedule, or implementing office) and cannot be submitted for review.';
   end if;
 
   return new;
@@ -180,17 +185,15 @@ end;
 $$;
 
 -- =========================================================================
--- 4. The endorsement gate, repointed.
+-- 4. The endorsement (approval) gate, repointed.
 --
 --    20260820100000 used "approved_budget is set and positive" as proof that
 --    Engineering had reviewed the project, on the reasoning that it was the
---    one field only Engineering could write. That reasoning expires with
---    part 2: approved_budget is MPDC's own field now, so keeping the gate as
---    it stands would have MPDC satisfying its own precondition and
---    endorsing straight to BAC without Engineering ever opening the project.
---
---    pow_amount inherits the role, and inherits it more honestly — a POW is
---    the actual deliverable of the technical review, not a proxy for it.
+--    one field only Engineering could write. approved_budget is MPDC's own
+--    field now, so keeping that gate would let MPDC satisfy its own
+--    precondition and approve without Engineering ever opening the project.
+--    pow_amount — the actual deliverable of the technical review — takes
+--    its place.
 -- =========================================================================
 drop policy if exists endorsements_insert_mpdc on public.project_endorsements;
 create policy endorsements_insert_mpdc on public.project_endorsements
@@ -209,3 +212,81 @@ create policy endorsements_insert_mpdc on public.project_endorsements
         and (public.app_is_admin() or p.created_by = auth.uid())
     )
   );
+
+-- =========================================================================
+-- 5. Rejection moves from Engineering to MPDC.
+--
+--    Engineering keeps RETURNED_FOR_REVISION: sending the project back with
+--    remarks is how it flags technical issues, and MPDC still decides what
+--    happens next. REJECTED is MPDC's alone, on its own project, while it
+--    is under review or after Engineering has returned it (so MPDC can drop
+--    a project Engineering flagged instead of revising it). The submission
+--    must belong to the same project, so a decision can't be filed against
+--    another project's submission.
+--
+--    apply_project_approval() is unchanged — it already drives the status
+--    from the decision and writes a role-neutral audit entry.
+-- =========================================================================
+drop policy if exists approvals_insert_engineering on public.project_approvals;
+create policy approvals_insert_engineering on public.project_approvals
+  for insert to authenticated
+  with check (
+    public.app_current_role() = 'engineering'
+    and reviewed_by = auth.uid()
+    and decision = 'RETURNED_FOR_REVISION'
+    and exists (
+      select 1 from public.projects p
+      join public.profiles me on me.id = auth.uid()
+      join public.project_submissions s on s.id = submission_id and s.project_id = p.id
+      where p.id = project_id
+        and p.status = 'SUBMITTED_FOR_REVIEW'
+        and p.office_id = me.office_id
+    )
+  );
+
+drop policy if exists approvals_insert_mpdc on public.project_approvals;
+create policy approvals_insert_mpdc on public.project_approvals
+  for insert to authenticated
+  with check (
+    public.app_current_role() = 'mpdc'
+    and reviewed_by = auth.uid()
+    and decision = 'REJECTED'
+    and exists (
+      select 1 from public.projects p
+      join public.project_submissions s on s.id = submission_id and s.project_id = p.id
+      where p.id = project_id
+        and p.status in ('SUBMITTED_FOR_REVIEW', 'RETURNED_FOR_REVISION')
+        and p.created_by = auth.uid()
+    )
+  );
+
+-- =========================================================================
+-- 6. Budget audit entry, reworded. 20260812140000 hardcoded "Engineering
+--    updated project fields", which is wrong now that MPDC owns these two
+--    columns. actor_id already records who made the change, so the
+--    description stays role-neutral. A migration that backfills the budget
+--    can set app.budget_backfill to label its entries as such.
+-- =========================================================================
+create or replace function public.audit_project_field_edit()
+returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.approved_budget is distinct from old.approved_budget
+    or new.funding_source is distinct from old.funding_source
+  then
+    perform public.write_audit_log(
+      'PROJECT_FIELD_UPDATED', 'project', new.id,
+      case
+        when coalesce(current_setting('app.budget_backfill', true), '') = 'true'
+          then 'Approved budget backfilled from estimated cost (data migration)'
+        else 'Approved budget / funding source updated'
+      end,
+      jsonb_build_object(
+        'old_approved_budget', old.approved_budget, 'new_approved_budget', new.approved_budget,
+        'old_funding_source', old.funding_source, 'new_funding_source', new.funding_source
+      )
+    );
+  end if;
+  return new;
+end;
+$$;

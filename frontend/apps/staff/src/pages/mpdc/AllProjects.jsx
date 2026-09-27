@@ -13,7 +13,7 @@ import { formatCurrency, formatDate } from '@shared/utils/format'
 import { PROJECT_STATUS_LABELS, PROJECT_STATUS_TONES, MONITORING_VISIBLE_STATUSES } from '@shared/utils/projectStatus'
 
 const selectClass =
-  'rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600'
+  'rounded-md border border-slate-400 dark:border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600'
 
 // Cross-office, every status — the landing page for the Dashboard's
 // Total/Submitted/Total Budget tiles, none of which map to a single status

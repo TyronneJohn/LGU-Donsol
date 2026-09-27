@@ -15,7 +15,7 @@ export function ToastProvider({ children }) {
   const notify = useCallback(
     (type, title, description, duration = 5000) => {
       const id = ++toastId
-      setToasts((current) => [...current, { id, type, title, description }])
+      setToasts((current) => [...current, { id, type, title, description, duration }])
       if (duration) {
         setTimeout(() => dismiss(id), duration)
       }

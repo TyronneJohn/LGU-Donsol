@@ -46,6 +46,28 @@
   --animate-blob: blob 16s ease-in-out infinite;
   --animate-fade-in: fade-in 0.35s ease-out both;
   --animate-pop-in: pop-in 0.15s ease-out both;
+  --animate-toast-in: toast-in 0.3s cubic-bezier(0.21, 1.02, 0.73, 1) both;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-16px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Countdown bar under each toast; duration is set inline per toast. */
+@keyframes toast-progress {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
 }
 
 @keyframes blob {
@@ -208,6 +230,22 @@
   }
   :where(.dark) .text-gold-600 {
     color: var(--color-gold-400);
+  }
+}
+
+/* Native <select> popups: most selects set no background, so on Windows
+ * Chromium the open option list falls back to a white system popup even
+ * with color-scheme: dark. Give selects and their options an explicit dark
+ * surface; in the base layer so any bg-* utility on a select still wins. */
+@layer base {
+  .dark select {
+    background-color: var(--dark-surface);
+    color: #ededed;
+  }
+  .dark select option,
+  .dark select optgroup {
+    background-color: var(--dark-surface);
+    color: #ededed;
   }
 }
 

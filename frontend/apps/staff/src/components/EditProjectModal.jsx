@@ -11,7 +11,7 @@ import { DONSOL_BARANGAYS } from '@shared/utils/barangays'
 import { DONSOL_BARANGAY_CENTROIDS } from '@shared/utils/barangayCentroids'
 
 const inputClass =
-  'w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600'
+  'w-full rounded-md border border-slate-400 dark:border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600'
 
 export const DOC_CATEGORY_LABELS = {
   PROGRAM_OF_WORKS: 'Program of Works',
@@ -61,7 +61,6 @@ function toForm(project) {
     location_text: project.location_text ?? '',
     latitude: project.latitude ?? '',
     longitude: project.longitude ?? '',
-    estimated_cost: project.estimated_cost == null ? '' : String(project.estimated_cost),
     approved_budget: project.approved_budget == null ? '' : String(project.approved_budget),
     funding_source: project.funding_source ?? '',
     start_date_planned: project.start_date_planned ?? '',
@@ -240,7 +239,6 @@ export default function EditProjectModal({ open, project, documents = [], onClos
       location_text: form.location_text.trim() || null,
       latitude: form.latitude === '' ? null : Number(form.latitude),
       longitude: form.longitude === '' ? null : Number(form.longitude),
-      estimated_cost: form.estimated_cost === '' ? null : Number(form.estimated_cost),
       approved_budget: form.approved_budget === '' ? null : Number(form.approved_budget),
       funding_source: form.funding_source.trim() || null,
       start_date_planned: form.start_date_planned || null,
@@ -371,15 +369,6 @@ export default function EditProjectModal({ open, project, documents = [], onClos
               placeholder="Purok / sitio / landmark"
               value={form.location_text}
               onChange={(event) => updateField('location_text', event.target.value)}
-              className={inputClass}
-            />
-          </Field>
-
-          <Field id="edit-estimated-cost" label="Estimated Budget (PHP)">
-            <CurrencyInput
-              id="edit-estimated-cost"
-              value={form.estimated_cost}
-              onChange={(value) => updateField('estimated_cost', value)}
               className={inputClass}
             />
           </Field>

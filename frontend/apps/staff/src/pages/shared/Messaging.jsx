@@ -311,22 +311,7 @@ export default function Messaging() {
       )
       if (notifyError) toast.error('Sent, but could not notify the recipient office', notifyError.message)
     }
-
-    supabase
-      .rpc('write_audit_log', {
-        p_action: 'MESSAGE_SENT',
-        p_entity_type: 'message',
-        p_entity_id: inserted.id,
-        p_description: `Message sent to ${ROLE_LABELS[selectedRole]}`,
-        p_metadata: {
-          recipient_role: selectedRole,
-          project_id: inserted.project_id ?? null,
-          attachment_name: inserted.attachment_name ?? null,
-        },
-      })
-      .then(({ error }) => {
-        if (error) console.error('write_audit_log failed', error)
-      })
+    // MESSAGE_SENT is audited by the trg_audit_message_sent database trigger.
   }
 
   function pickFile(file) {
@@ -709,7 +694,7 @@ function Thread({
             }}
             rows={1}
             placeholder={`Message ${ROLE_LABELS[selectedRole]}...`}
-            className="max-h-32 flex-1 resize-none rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
+            className="max-h-32 flex-1 resize-none rounded-lg border border-slate-400 dark:border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
           />
 
           <button
@@ -900,7 +885,7 @@ function ProjectPicker({ onPick, onBrowseFiles }) {
           value={term}
           onChange={(event) => setTerm(event.target.value)}
           placeholder="Search a project to attach..."
-          className="w-full rounded-md border border-slate-300 py-1.5 pl-8 pr-2 text-xs focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
+          className="w-full rounded-md border border-slate-400 dark:border-slate-300 py-1.5 pl-8 pr-2 text-xs focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
         />
       </div>
       <div className="max-h-56 overflow-y-auto">
@@ -1009,11 +994,10 @@ function ProjectPanel({ project, loading, onClose, role, userId }) {
               <PanelField label="Barangay">{project.barangay}</PanelField>
               <PanelField label="Location">{project.location_text}</PanelField>
               <PanelField label="Funding Source">{project.funding_source}</PanelField>
-              <PanelField label="Estimated Cost">
-                {project.estimated_cost != null ? formatCurrency(project.estimated_cost) : null}
-              </PanelField>
               <PanelField label="Approved Budget">
-                {project.approved_budget != null ? formatCurrency(project.approved_budget) : null}
+                {(project.approved_budget ?? project.estimated_cost) != null
+                  ? formatCurrency(project.approved_budget ?? project.estimated_cost)
+                  : null}
               </PanelField>
               <PanelField label="Planned Start">
                 {project.start_date_planned ? formatDate(project.start_date_planned) : null}

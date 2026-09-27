@@ -215,7 +215,7 @@ export default function Login() {
                     value={email}
                     onChange={(event) => setEmail(event.target.value)}
                     placeholder="Enter your email"
-                    className="w-full rounded-lg border border-slate-300 bg-white/80 py-2.5 pl-10 pr-3 text-sm shadow-sm transition-colors focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/30"
+                    className="w-full rounded-lg border border-slate-400 dark:border-slate-300 bg-white/80 py-2.5 pl-10 pr-3 text-sm shadow-sm transition-colors focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/30"
                   />
                 </div>
               </div>
@@ -246,7 +246,7 @@ export default function Login() {
                     value={password}
                     onChange={(event) => setPassword(event.target.value)}
                     placeholder="Enter your password"
-                    className="w-full rounded-lg border border-slate-300 bg-white/80 py-2.5 pl-10 pr-10 text-sm shadow-sm transition-colors focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/30"
+                    className="w-full rounded-lg border border-slate-400 dark:border-slate-300 bg-white/80 py-2.5 pl-10 pr-10 text-sm shadow-sm transition-colors focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/30"
                   />
                   <button
                     type="button"
@@ -303,7 +303,7 @@ export default function Login() {
                         value={resetEmail}
                         onChange={(event) => setResetEmail(event.target.value)}
                         placeholder="Enter your email"
-                        className="w-full rounded-lg border border-slate-300 bg-white/80 py-2.5 pl-10 pr-3 text-sm shadow-sm transition-colors focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/30"
+                        className="w-full rounded-lg border border-slate-400 dark:border-slate-300 bg-white/80 py-2.5 pl-10 pr-3 text-sm shadow-sm transition-colors focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/30"
                       />
                     </div>
                   </div>

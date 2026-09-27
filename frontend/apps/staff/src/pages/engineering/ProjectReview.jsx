@@ -18,7 +18,7 @@ export default function ProjectReview() {
     const { data, error } = await supabase
       .from('projects')
       .select(
-        `id, project_code, title, project_category, barangay, estimated_cost, created_at,
+        `id, project_code, title, project_category, barangay, estimated_cost, approved_budget, created_at,
          offices(name),
          creator:profiles!projects_created_by_fkey(full_name)`,
       )
@@ -62,7 +62,7 @@ export default function ProjectReview() {
                 <th className="px-4 py-2.5 font-medium">Title</th>
                 <th className="px-4 py-2.5 font-medium">Office</th>
                 <th className="px-4 py-2.5 font-medium">Submitted By</th>
-                <th className="px-4 py-2.5 font-medium">Est. Cost</th>
+                <th className="px-4 py-2.5 font-medium">Approved Budget</th>
                 <th className="px-4 py-2.5 font-medium">Submitted</th>
                 <th className="px-4 py-2.5 font-medium" />
               </tr>
@@ -74,7 +74,7 @@ export default function ProjectReview() {
                   <td className="px-4 py-2.5 text-slate-800">{project.title}</td>
                   <td className="px-4 py-2.5 text-slate-600">{project.offices?.name ?? '—'}</td>
                   <td className="px-4 py-2.5 text-slate-600">{project.creator?.full_name ?? '—'}</td>
-                  <td className="px-4 py-2.5 text-slate-600">{formatCurrency(project.estimated_cost)}</td>
+                  <td className="px-4 py-2.5 text-slate-600">{formatCurrency(project.approved_budget ?? project.estimated_cost)}</td>
                   <td className="px-4 py-2.5 text-slate-600">{formatDate(project.created_at)}</td>
                   <td className="px-4 py-2.5 text-right">
                     <Button to={`/engineering/review/${project.id}`} variant="secondary" size="sm" icon={ArrowRight}>

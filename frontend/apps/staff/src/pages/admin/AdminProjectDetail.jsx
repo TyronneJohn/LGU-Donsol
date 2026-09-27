@@ -260,9 +260,8 @@ export default function AdminProjectDetail() {
                 <span className="text-slate-400">No location on file for Donsol, Sorsogon.</span>
               )}
             </Field>
-            <Field label="Estimated Cost">{formatCurrency(project.estimated_cost)}</Field>
             <Field label="Approved Budget (MPDC Allocation)">
-              {formatCurrency(project.approved_budget)}
+              {formatCurrency(project.approved_budget ?? project.estimated_cost)}
             </Field>
             <Field label="Funding Source">{project.funding_source}</Field>
             <Field label="Program of Works">{formatCurrency(project.pow_amount)}</Field>

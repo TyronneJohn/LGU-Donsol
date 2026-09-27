@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { FileWarning, MapPin, RotateCcw, Save, Upload, XCircle } from 'lucide-react'
+import { FileWarning, MapPin, RotateCcw, Save, Upload } from 'lucide-react'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
 import { useConfirm } from '../../hooks/useConfirm'
@@ -19,7 +19,7 @@ import { getDocumentViewUrl } from '@shared/utils/documentViewer'
 import { isWithinDonsol } from '@shared/utils/geo'
 
 const inputClass =
-  'w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500'
+  'w-full rounded-md border border-slate-400 dark:border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500'
 const textareaClass = inputClass
 
 const DOC_CATEGORY_LABELS = {
@@ -29,33 +29,22 @@ const DOC_CATEGORY_LABELS = {
   OTHER: 'Other',
 }
 
-// Keyed by public.approval_decision. Engineering may only record a negative
-// review decision here (project_approvals RLS enforces this at the database
-// level, not just this list) — endorsing the project forward to BAC is MPDC's
-// action (project_endorsements, on the MPDC project detail page), never a
-// project_approvals row with decision = APPROVED.
+// Keyed by public.approval_decision. Engineering's review is a
+// recommendation, not the decision: it can only send the project back to
+// MPDC with remarks (project_approvals RLS enforces this at the database
+// level, not just this list). Approving (endorsing to BAC) and rejecting are
+// both MPDC's, on the MPDC project detail page.
 const DECISION_CONFIG = {
   RETURNED_FOR_REVISION: {
     label: 'Return for Revision',
     variant: 'secondary',
     icon: RotateCcw,
     remarksRequired: true,
-    remarksLabel: 'Reason for return (required)',
+    remarksLabel: 'Technical findings / reason for return (required)',
     confirmTitle: 'Return this project for revision?',
-    confirmDescription: 'The submitter will be notified and must revise and resubmit.',
+    confirmDescription: 'MPDC will be notified and will decide whether to revise and resubmit or reject the project.',
     confirmTone: 'default',
     successMessage: 'Project returned for revision.',
-  },
-  REJECTED: {
-    label: 'Reject',
-    variant: 'danger',
-    icon: XCircle,
-    remarksRequired: true,
-    remarksLabel: 'Rejection reason (required)',
-    confirmTitle: 'Reject this project?',
-    confirmDescription: 'The submitter will be notified. This decision is recorded permanently.',
-    confirmTone: 'danger',
-    successMessage: 'Project rejected.',
   },
 }
 
@@ -99,8 +88,7 @@ export default function ProjectReviewDetail() {
 
   // Unsaved review input survives a refresh or anything that unmounts this
   // page. The POW fields are drafted against the project's saved values; the
-  // decision remarks against an empty box, keyed per decision type so
-  // switching between Return and Reject doesn't mix them up.
+  // decision remarks against an empty box, keyed per decision type.
   //
   // File handles are deliberately left out of every draft (powFiles, docForm):
   // they come from a picker and cannot be serialised or re-attached, so a
@@ -258,15 +246,13 @@ export default function ProjectReviewDetail() {
     setRemarks('')
   }
 
-  async function sendDecisionNotification(decision, remarksText) {
-    const category = decision === 'REJECTED' ? 'PROJECT_REJECTED' : 'PROJECT_RETURNED'
-    const title =
-      decision === 'REJECTED'
-        ? `Project rejected: ${project.title}`
-        : `Project returned for revision: ${project.title}`
+  async function sendDecisionNotification(remarksText) {
+    const category = 'PROJECT_RETURNED'
+    const title = `Project returned for revision: ${project.title}`
 
     const { error } = await supabase.from('notifications').insert({
       recipient_id: project.created_by,
+      sender_id: user.id,
       category,
       title,
       message: remarksText,
@@ -312,7 +298,7 @@ export default function ProjectReviewDetail() {
       return
     }
 
-    await sendDecisionNotification(actionType, trimmedRemarks)
+    await sendDecisionNotification(trimmedRemarks)
 
     clearDraft(remarksDraftKey)
     setSubmitting(false)
@@ -402,6 +388,7 @@ export default function ProjectReviewDetail() {
       project.approved_budget != null && powAmount > Number(project.approved_budget)
     const { error: notifyError } = await supabase.from('notifications').insert({
       recipient_id: project.created_by,
+      sender_id: user.id,
       category: 'PROJECT_REVIEW_READY',
       title: `Program of Works submitted: ${project.title}`,
       message: overBudget
@@ -549,7 +536,6 @@ export default function ProjectReviewDetail() {
                 <span className="text-slate-400">No location on file for Donsol, Sorsogon.</span>
               )}
             </Field>
-            <Field label="Estimated Cost">{formatCurrency(project.estimated_cost)}</Field>
             <Field label="Planned Start">{formatDate(project.start_date_planned)}</Field>
             <Field label="Planned End">{formatDate(project.end_date_planned)}</Field>
           </div>
@@ -781,7 +767,7 @@ export default function ProjectReviewDetail() {
         ) : null}
 
         <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
-          <h2 className="text-sm font-semibold text-slate-800">Send Back or Reject</h2>
+          <h2 className="text-sm font-semibold text-slate-800">Return for Revision</h2>
 
           {!canReview ? (
             <p className="mt-2 text-sm text-slate-500">
@@ -790,7 +776,8 @@ export default function ProjectReviewDetail() {
           ) : (
             <>
               <p className="mt-1 text-sm text-slate-500">
-                Return this project to the submitter for revision, or reject it outright.
+                Flag technical issues by returning this project to MPDC with your findings. This is a
+                recommendation — MPDC makes the final decision to approve or reject.
               </p>
 
               <div className="mt-4 flex flex-wrap gap-2">

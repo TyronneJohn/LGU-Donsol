@@ -24,7 +24,7 @@ import { getDocumentViewUrl } from '@shared/utils/documentViewer'
 import { isWithinDonsol } from '@shared/utils/geo'
 
 const inputClass =
-  'w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500'
+  'w-full rounded-md border border-slate-400 dark:border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500'
 
 const PROCUREMENT_DOC_CATEGORY_LABELS = {
   INVITATION_TO_BID: 'Invitation to Bid',
@@ -597,9 +597,8 @@ export default function BacProcurementDetail() {
                 <span className="text-slate-400">No location on file for Donsol, Sorsogon.</span>
               )}
             </Field>
-            <Field label="Estimated Cost">{formatCurrency(project.estimated_cost)}</Field>
             <Field label="Approved Budget (MPDC Allocation)">
-              {formatCurrency(project.approved_budget)}
+              {formatCurrency(project.approved_budget ?? project.estimated_cost)}
             </Field>
             <Field label="Program of Works">{formatCurrency(project.pow_amount)}</Field>
             <Field label="Funding Source">{project.funding_source}</Field>

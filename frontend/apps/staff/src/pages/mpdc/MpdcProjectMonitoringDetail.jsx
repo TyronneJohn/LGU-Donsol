@@ -408,7 +408,7 @@ export default function MpdcProjectMonitoringDetail() {
                 <span className="text-slate-400">No location on file for Donsol, Sorsogon.</span>
               )}
             </Field>
-            <Field label="Approved Budget">{formatCurrency(project.approved_budget || project.estimated_cost)}</Field>
+            <Field label="Approved Budget">{formatCurrency(project.approved_budget ?? project.estimated_cost)}</Field>
             <Field label="Funding Source">{project.funding_source}</Field>
             <Field label="Planned Start">{formatDate(project.start_date_planned)}</Field>
             <Field label="Planned End">{formatDate(project.end_date_planned)}</Field>

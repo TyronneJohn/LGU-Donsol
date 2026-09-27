@@ -12,7 +12,7 @@ import { formatCurrency, formatDate } from '@shared/utils/format'
 import { PROJECT_STATUS_LABELS, PROJECT_STATUS_TONES } from '@shared/utils/projectStatus'
 
 const selectClass =
-  'rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600'
+  'rounded-md border border-slate-400 dark:border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600'
 
 // Read-only cross-office view. Admin already has SELECT access to every
 // project via the projects_select_staff RLS policy — this page just

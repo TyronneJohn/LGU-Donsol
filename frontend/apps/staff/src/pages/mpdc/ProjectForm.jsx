@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ChevronDown, FileWarning, MapPin, Save, Send } from 'lucide-react'
+import { ChevronDown, FileWarning, MapPin, Save, Send, XCircle } from 'lucide-react'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
 import { useConfirm } from '../../hooks/useConfirm'
@@ -21,7 +21,7 @@ import { DONSOL_BARANGAY_CENTROIDS } from '@shared/utils/barangayCentroids'
 import LocationModal from '../../components/LocationModal'
 
 const inputClass =
-  'w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500'
+  'w-full rounded-md border border-slate-400 dark:border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500'
 const textareaClass = inputClass
 
 const EMPTY_FORM = {
@@ -33,7 +33,6 @@ const EMPTY_FORM = {
   location_text: '',
   latitude: '',
   longitude: '',
-  estimated_cost: '',
   approved_budget: '',
   funding_source: '',
   start_date_planned: '',
@@ -51,7 +50,6 @@ const REQUIRED_FIELD_LABELS = {
   sector: 'Category',
   barangay: 'Barangay',
   location_text: 'Location',
-  estimated_cost: 'Estimated Budget',
   approved_budget: 'Approved Budget',
   funding_source: 'Funding Source',
   start_date_planned: 'Proposed Start Date',
@@ -94,10 +92,14 @@ export default function ProjectForm() {
 
   const [endorsementNotes, setEndorsementNotes] = useState('')
   const [endorsing, setEndorsing] = useState(false)
+  const [rejectRemarks, setRejectRemarks] = useState('')
+  const [rejecting, setRejecting] = useState(false)
   const [locationOpen, setLocationOpen] = useState(false)
 
   const barangayPopover = useDismissablePopover()
   const barangayTriggerRef = useRef(null)
+  const sectorPopover = useDismissablePopover()
+  const sectorTriggerRef = useRef(null)
 
   // The form as it stands with nothing unsaved in it: blank (plus the
   // implementing office) for a new project, the saved row's values for an
@@ -205,7 +207,7 @@ export default function ProjectForm() {
       .from('projects')
       .select(
         `id, project_code, title, description, project_category, sector, barangay, location_text,
-         latitude, longitude, estimated_cost, approved_budget, funding_source,
+         latitude, longitude, approved_budget, funding_source,
          pow_amount, pow_date, pow_submitted_at,
          start_date_planned, end_date_planned, status, created_by, office_id`,
       )
@@ -245,7 +247,6 @@ export default function ProjectForm() {
       location_text: data.location_text ?? '',
       latitude: data.latitude ?? centroid?.lat ?? '',
       longitude: data.longitude ?? centroid?.lng ?? '',
-      estimated_cost: data.estimated_cost ?? '',
       approved_budget: data.approved_budget ?? '',
       funding_source: data.funding_source ?? '',
       start_date_planned: data.start_date_planned ?? '',
@@ -315,9 +316,6 @@ export default function ProjectForm() {
     if (!form.sector) missing.push(REQUIRED_FIELD_LABELS.sector)
     if (!form.barangay.trim()) missing.push(REQUIRED_FIELD_LABELS.barangay)
     if (!form.location_text.trim()) missing.push(REQUIRED_FIELD_LABELS.location_text)
-    if (form.estimated_cost === '' || Number(form.estimated_cost) <= 0) {
-      missing.push(REQUIRED_FIELD_LABELS.estimated_cost)
-    }
     if (form.approved_budget === '' || Number(form.approved_budget) <= 0) {
       missing.push(REQUIRED_FIELD_LABELS.approved_budget)
     }
@@ -338,7 +336,6 @@ export default function ProjectForm() {
       location_text: form.location_text.trim() || null,
       latitude: form.latitude === '' ? null : Number(form.latitude),
       longitude: form.longitude === '' ? null : Number(form.longitude),
-      estimated_cost: form.estimated_cost === '' ? null : Number(form.estimated_cost),
       approved_budget: form.approved_budget === '' ? null : Number(form.approved_budget),
       funding_source: form.funding_source.trim() || null,
       start_date_planned: form.start_date_planned || null,
@@ -457,6 +454,7 @@ export default function ProjectForm() {
       const { error: notifyError } = await supabase.from('notifications').insert(
         engineeringStaff.map((staff) => ({
           recipient_id: staff.id,
+          sender_id: user.id,
           category: 'PROJECT_SUBMITTED',
           title: `New project submitted for review: ${project.title}`,
           message: submissionNotes.trim() || `${project.project_code} is ready for review.`,
@@ -498,6 +496,80 @@ export default function ProjectForm() {
     }
 
     toast.success('Project endorsed', 'BAC has been notified and can begin procurement.')
+    navigate('/mpdc/projects')
+  }
+
+  // MPDC's final "no". Filed as a project_approvals decision against the
+  // latest submission; apply_project_approval (DB trigger) moves the project
+  // to REJECTED and writes the audit log. Engineering can only return a
+  // project, never reject it (20260929100000_mpdc_approval_authority.sql).
+  async function handleReject() {
+    const trimmedRemarks = rejectRemarks.trim()
+    if (!trimmedRemarks) {
+      toast.error('Remarks required', 'Please provide the reason for rejecting this project.')
+      return
+    }
+
+    const confirmed = await confirm({
+      title: 'Reject this project?',
+      description: 'Engineering will be notified. This decision is recorded permanently.',
+      tone: 'danger',
+      confirmLabel: 'Reject Project',
+    })
+    if (!confirmed) return
+
+    setRejecting(true)
+
+    const { data: submission, error: submissionError } = await supabase
+      .from('project_submissions')
+      .select('id')
+      .eq('project_id', project.id)
+      .order('submission_number', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (submissionError || !submission) {
+      toast.error('Could not reject project', submissionError?.message ?? 'No submission record was found for this project.')
+      setRejecting(false)
+      return
+    }
+
+    const { error } = await supabase.from('project_approvals').insert({
+      project_id: project.id,
+      submission_id: submission.id,
+      reviewed_by: user.id,
+      decision: 'REJECTED',
+      remarks: trimmedRemarks,
+    })
+
+    if (error) {
+      toast.error('Could not reject project', error.message)
+      setRejecting(false)
+      return
+    }
+
+    const { data: engineeringStaff } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('role', 'engineering')
+      .eq('is_active', true)
+
+    if (engineeringStaff?.length) {
+      const { error: notifyError } = await supabase.from('notifications').insert(
+        engineeringStaff.map((staff) => ({
+          recipient_id: staff.id,
+          sender_id: user.id,
+          category: 'PROJECT_REJECTED',
+          title: `Project rejected by MPDC: ${project.title}`,
+          message: trimmedRemarks,
+          related_project_id: project.id,
+        })),
+      )
+      if (notifyError) toast.error('Rejected, but could not notify Engineering', notifyError.message)
+    }
+
+    setRejecting(false)
+    toast.success('Project rejected', 'The decision has been recorded.')
     navigate('/mpdc/projects')
   }
 
@@ -629,19 +701,41 @@ export default function ProjectForm() {
               <label htmlFor="sector" className="mb-1 block text-sm font-medium text-slate-700">
                 Category *
               </label>
-              <select
-                id="sector"
-                value={form.sector}
-                onChange={(event) => updateField('sector', event.target.value)}
-                className={inputClass}
-              >
-                <option value="">Select a category</option>
-                {Object.entries(SECTOR_LABELS).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
+              <div className="relative" ref={sectorPopover.containerRef}>
+                <button
+                  id="sector"
+                  ref={sectorTriggerRef}
+                  type="button"
+                  onClick={() => sectorPopover.setOpen((current) => !current)}
+                  className={`${inputClass} flex items-center justify-between text-left`}
+                >
+                  <span className={form.sector ? 'text-slate-900' : 'text-slate-400'}>
+                    {SECTOR_LABELS[form.sector] ?? (form.sector || 'Select a category')}
+                  </span>
+                  <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
+                </button>
+
+                {sectorPopover.open ? (
+                  <div className="absolute left-0 top-full z-30 mt-1 max-h-56 w-full overflow-y-auto rounded-md border border-slate-200 bg-white py-1 shadow-xl shadow-slate-900/10">
+                    {Object.entries(SECTOR_LABELS).map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => {
+                          updateField('sector', value)
+                          sectorPopover.close()
+                          sectorTriggerRef.current?.blur()
+                        }}
+                        className={`block w-full px-3 py-1.5 text-left text-sm hover:bg-slate-50 ${
+                          form.sector === value ? 'bg-blue-50 font-medium text-blue-700' : 'text-slate-700'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
             </div>
 
             <div>
@@ -741,18 +835,6 @@ export default function ProjectForm() {
           ) : null}
 
           <fieldset disabled={!editable} className="mt-4 grid gap-4 sm:grid-cols-2">
-            <div>
-              <label htmlFor="estimated_cost" className="mb-1 block text-sm font-medium text-slate-700">
-                Estimated Budget (PHP) *
-              </label>
-              <CurrencyInput
-                id="estimated_cost"
-                value={form.estimated_cost}
-                onChange={(value) => updateField('estimated_cost', value)}
-                className={inputClass}
-              />
-            </div>
-
             <div>
               <label htmlFor="approved_budget" className="mb-1 block text-sm font-medium text-slate-700">
                 Approved Budget (PHP) *
@@ -894,12 +976,12 @@ export default function ProjectForm() {
 
         {!isNew && project.status === 'SUBMITTED_FOR_REVIEW' ? (
           <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
-            <h2 className="text-sm font-semibold text-slate-800">Endorse to BAC</h2>
+            <h2 className="text-sm font-semibold text-slate-800">Approve and Endorse to BAC</h2>
 
             {reviewReady ? (
               <>
                 <p className="mt-1 text-sm text-slate-500">
-                  When the project is technically ready, endorse it to BAC to begin procurement.
+                  When the project is technically ready, approve it and endorse it to BAC to begin procurement.
                 </p>
 
                 <div className="mt-4">
@@ -927,6 +1009,41 @@ export default function ProjectForm() {
                 This project can be endorsed to BAC once the POW is on file.
               </p>
             )}
+          </section>
+        ) : null}
+
+        {!isNew && ['SUBMITTED_FOR_REVIEW', 'RETURNED_FOR_REVISION'].includes(project.status) ? (
+          <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
+            <h2 className="text-sm font-semibold text-slate-800">Reject Project</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Reject this project if it will not proceed (e.g. not in the AIP, no available funds, or not
+              feasible per Engineering's findings). This is final.
+            </p>
+
+            <div className="mt-4">
+              <label htmlFor="reject_remarks" className="mb-1 block text-sm font-medium text-slate-700">
+                Rejection reason (required)
+              </label>
+              <textarea
+                id="reject_remarks"
+                rows={3}
+                value={rejectRemarks}
+                onChange={(event) => setRejectRemarks(event.target.value)}
+                className={textareaClass}
+              />
+            </div>
+
+            <div className="mt-3">
+              <Button
+                variant="danger"
+                icon={XCircle}
+                onClick={handleReject}
+                loading={rejecting}
+                disabled={!rejectRemarks.trim()}
+              >
+                Reject Project
+              </Button>
+            </div>
           </section>
         ) : null}
       </div>

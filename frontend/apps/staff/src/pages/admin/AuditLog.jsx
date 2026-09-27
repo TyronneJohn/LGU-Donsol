@@ -14,7 +14,7 @@ import { AUDIT_ACTION_LABELS, AUDIT_ACTION_TONES, ENTITY_TYPE_LABELS } from '../
 const PAGE_SIZE = 30
 
 const selectClass =
-  'rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600'
+  'rounded-md border border-slate-400 dark:border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600'
 
 // Reads the append-only audit_logs table (admin-only per RLS) that's
 // already populated by triggers across every office's mutations — project

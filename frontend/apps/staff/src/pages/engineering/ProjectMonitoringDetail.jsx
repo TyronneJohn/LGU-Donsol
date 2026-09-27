@@ -27,14 +27,24 @@ import { analyzeProjectImage } from '../../utils/imageAnalysis'
 import { isWithinDonsol } from '@shared/utils/geo'
 
 const inputClass =
-  'w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500'
+  'w-full rounded-md border border-slate-400 dark:border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500'
 const textareaClass = inputClass
+
+// Today's date in the device's local time zone as YYYY-MM-DD. toISOString()
+// would give the UTC date, which in the Philippines is still yesterday until
+// 8 AM. The database rejects future report dates against Manila time.
+function localToday() {
+  const now = new Date()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${now.getFullYear()}-${month}-${day}`
+}
 
 const EMPTY_FORM = {
   progress_percentage: '',
   narrative_report: '',
   issues_encountered: '',
-  report_date: new Date().toISOString().slice(0, 10),
+  report_date: localToday(),
 }
 
 // Live in-page camera, for taking a fresh site photo on the spot rather than
@@ -433,6 +443,10 @@ export default function ProjectMonitoringDetail() {
       toast.error('Report date required', 'Choose the date this update covers.')
       return
     }
+    if (form.report_date > localToday()) {
+      toast.error('Invalid report date', 'The report date cannot be in the future.')
+      return
+    }
 
     setSubmitting(true)
     const previousStatus = project.status
@@ -620,6 +634,7 @@ export default function ProjectMonitoringDetail() {
                 <input
                   id="report_date"
                   type="date"
+                  max={localToday()}
                   value={form.report_date}
                   onChange={(event) => updateField('report_date', event.target.value)}
                   className={inputClass}
@@ -687,7 +702,7 @@ export default function ProjectMonitoringDetail() {
                         <select
                           value={photo.stage}
                           onChange={(event) => updatePhotoStage(photo.id, event.target.value)}
-                          className="rounded-md border border-slate-300 px-2 py-1 text-xs"
+                          className="rounded-md border border-slate-400 px-2 py-1 text-xs dark:border-slate-300"
                         >
                           {Object.entries(IMAGE_STAGE_LABELS).map(([value, label]) => (
                             <option key={value} value={value}>

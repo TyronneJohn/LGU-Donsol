@@ -215,7 +215,7 @@ export default function MpdcDashboard() {
             aria-label="Report quarter"
             value={reportQuarter}
             onChange={(event) => setReportQuarter(Number(event.target.value))}
-            className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
+            className="rounded-md border border-slate-400 dark:border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
           >
             {[1, 2, 3, 4].map((q) => (
               <option key={q} value={q}>
@@ -227,7 +227,7 @@ export default function MpdcDashboard() {
             aria-label="Report year"
             value={reportYear}
             onChange={(event) => setReportYear(Number(event.target.value))}
-            className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
+            className="rounded-md border border-slate-400 dark:border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
           >
             {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - 3 + i).map((y) => (
               <option key={y} value={y}>

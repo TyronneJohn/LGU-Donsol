@@ -1,26 +1,29 @@
 import { createPortal } from 'react-dom'
 import { AlertTriangle, CheckCircle2, Info, X, XCircle } from 'lucide-react'
 
+// White card with a colored icon badge, accent bar and countdown bar.
+// bg-white / text-slate-* / *-100 badges are remapped for dark mode in
+// shared/src/styles/index.css, so no dark: twins are needed here.
 const STYLES = {
   success: {
     icon: CheckCircle2,
-    className: 'border-emerald-200 bg-emerald-50 text-emerald-800',
-    iconClassName: 'text-emerald-600',
+    badgeClassName: 'bg-emerald-100 text-emerald-600',
+    accentClassName: 'bg-emerald-500',
   },
   error: {
     icon: XCircle,
-    className: 'border-red-200 bg-red-50 text-red-800',
-    iconClassName: 'text-red-600',
+    badgeClassName: 'bg-red-100 text-red-600',
+    accentClassName: 'bg-red-500',
   },
   warning: {
     icon: AlertTriangle,
-    className: 'border-amber-200 bg-amber-50 text-amber-800',
-    iconClassName: 'text-amber-600',
+    badgeClassName: 'bg-amber-100 text-amber-600',
+    accentClassName: 'bg-amber-500',
   },
   info: {
     icon: Info,
-    className: 'border-blue-200 bg-blue-50 text-blue-800',
-    iconClassName: 'text-blue-600',
+    badgeClassName: 'bg-blue-100 text-blue-600',
+    accentClassName: 'bg-blue-500',
   },
 }
 
@@ -31,7 +34,7 @@ export default function ToastViewport({ toasts, onDismiss }) {
     <div
       role="status"
       aria-live="polite"
-      className="fixed bottom-4 right-4 z-50 flex w-full max-w-sm flex-col gap-2"
+      className="pointer-events-none fixed top-4 left-1/2 z-[60] flex w-[calc(100%-2rem)] max-w-md -translate-x-1/2 flex-col gap-2.5"
     >
       {toasts.map((toast) => {
         const config = STYLES[toast.type] ?? STYLES.info
@@ -39,21 +42,33 @@ export default function ToastViewport({ toasts, onDismiss }) {
         return (
           <div
             key={toast.id}
-            className={`flex items-start gap-2.5 rounded-lg border px-3.5 py-3 shadow-md ${config.className}`}
+            className="pointer-events-auto relative flex animate-toast-in items-start gap-3 overflow-hidden rounded-xl bg-white py-3.5 pr-3 pl-4 shadow-lg shadow-slate-900/10 ring-1 ring-slate-900/10"
           >
-            <Icon className={`mt-0.5 h-5 w-5 shrink-0 ${config.iconClassName}`} aria-hidden="true" />
-            <div className="flex-1 text-sm">
-              <p className="font-medium">{toast.title}</p>
-              {toast.description ? <p className="mt-0.5 opacity-90">{toast.description}</p> : null}
+            <span className={`absolute inset-y-0 left-0 w-1 ${config.accentClassName}`} aria-hidden="true" />
+            <span
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${config.badgeClassName}`}
+            >
+              <Icon className="h-5 w-5" aria-hidden="true" />
+            </span>
+            <div className="min-w-0 flex-1 pt-0.5 text-sm">
+              <p className="font-semibold text-slate-900">{toast.title}</p>
+              {toast.description ? <p className="mt-0.5 text-slate-600">{toast.description}</p> : null}
             </div>
             <button
               type="button"
               onClick={() => onDismiss(toast.id)}
               aria-label="Dismiss notification"
-              className="shrink-0 rounded p-0.5 hover:bg-black/5"
+              className="shrink-0 rounded-md p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
             >
               <X className="h-4 w-4" aria-hidden="true" />
             </button>
+            {toast.duration ? (
+              <span
+                className={`absolute bottom-0 left-0 h-0.5 w-full origin-left opacity-60 ${config.accentClassName}`}
+                style={{ animation: `toast-progress ${toast.duration}ms linear forwards` }}
+                aria-hidden="true"
+              />
+            ) : null}
           </div>
         )
       })}
