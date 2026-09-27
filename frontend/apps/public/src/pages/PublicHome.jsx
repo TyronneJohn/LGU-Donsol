@@ -40,19 +40,23 @@ export default function PublicHome() {
 
   return (
     <div>
-      <section className="border-b border-slate-200 bg-linear-to-b from-blue-50/60 to-transparent">
-        <div className="mx-auto max-w-6xl px-4 py-16 text-center">
-          <h1 className="text-2xl font-semibold text-slate-800 sm:text-3xl">
+      <section>
+        <div className="animate-fade-in mx-auto max-w-6xl px-4 pb-14 pt-20 text-center sm:pb-16 sm:pt-24">
+          <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-medium text-gold-200 backdrop-blur-sm">
+            <span className="h-1.5 w-1.5 rounded-full bg-gold-400" aria-hidden="true" />
+            Bayan ng Donsol, Sorsogon
+          </span>
+          <h1 className="mt-5 font-display text-3xl font-semibold tracking-tight text-white sm:text-5xl">
             LGU Donsol Project Monitoring
           </h1>
-          <p className="mx-auto mt-3 max-w-2xl text-sm text-slate-500 sm:text-base">
+          <p className="mx-auto mt-4 max-w-2xl text-sm text-blue-100/85 sm:text-base">
             Track the status of approved local government infrastructure and development
             projects. Public information shown here reflects only projects that have been
             reviewed and published by MPDC.
           </p>
           <Link
             to="/projects"
-            className="mt-6 inline-flex items-center gap-2 rounded-lg bg-linear-to-r from-blue-700 to-blue-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm shadow-blue-700/30 transition-all hover:from-blue-800 hover:to-blue-700"
+            className="mt-8 inline-flex items-center gap-2 rounded-lg bg-gold-400 px-5 py-2.5 text-sm font-semibold text-blue-950 shadow-lg shadow-gold-500/25 transition-all hover:bg-gold-300 hover:shadow-gold-400/40"
           >
             View Published Projects
             <ArrowRight className="h-4 w-4" aria-hidden="true" />
@@ -60,11 +64,13 @@ export default function PublicHome() {
         </div>
       </section>
 
-      <section className="mx-auto max-w-6xl px-4 py-12">
+      <section className="mx-auto max-w-6xl px-4 pb-20">
         {loading ? (
-          <LoadingState label="Loading project statistics..." />
+          <div className="rounded-xl border border-slate-200/70 bg-white shadow-sm">
+            <LoadingState label="Loading project statistics..." />
+          </div>
         ) : projects.length === 0 ? (
-          <p className="text-center text-sm text-slate-400">
+          <p className="rounded-xl border border-slate-200/70 bg-white p-6 text-center text-sm text-slate-400 shadow-sm">
             Public project listings will appear here once the monitoring system is populated.
           </p>
         ) : (
@@ -72,7 +78,7 @@ export default function PublicHome() {
             {stats.map((stat) => (
               <div
                 key={stat.label}
-                className="flex items-center gap-4 rounded-xl border border-slate-200/70 bg-white p-5 shadow-sm shadow-slate-200/60 transition-shadow hover:shadow-md"
+                className="flex items-center gap-4 rounded-xl border border-slate-200/70 bg-white p-5 shadow-lg shadow-blue-950/10 transition-all hover:-translate-y-0.5 hover:shadow-xl"
               >
                 <span
                   className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full ring-1 ring-inset ${TILE_TONES[stat.tone]}`}

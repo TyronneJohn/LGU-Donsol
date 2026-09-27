@@ -6,7 +6,7 @@ import { useAuth } from '../hooks/useAuth'
 import { ROLE_HOME_PATH } from '../utils/roles'
 import Button from '../components/ui/Button'
 import donsolSeal from '@shared/assets/Donsol.png'
-import munisipyoPhoto from '../assets/Munisipyo.jpg'
+import munisipyoPhoto from '@shared/assets/Munisipyo.jpg'
 
 const HIGHLIGHTS = [
   'Real-time project monitoring across every office',
