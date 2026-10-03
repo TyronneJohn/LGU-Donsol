@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { FileWarning, MapPin, Pencil } from 'lucide-react'
+import { FileWarning, Images, MapPin, Pencil } from 'lucide-react'
+import { UpdateAnalysisFlag, UpdateComparisonModal } from '../../components/UpdateComparison'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
 import PageHeader from '../../components/ui/PageHeader'
@@ -12,7 +13,6 @@ import DssPanel from '../../components/ui/DssPanel'
 import LocationModal from '../../components/LocationModal'
 import EditProjectModal, { DOC_CATEGORY_LABELS } from '../../components/EditProjectModal'
 import SitePhotoGrid from '../../components/ui/SitePhotoGrid'
-import { analyzeProjectImage } from '../../utils/imageAnalysis'
 import { formatCurrency, formatDate, formatDateTime } from '@shared/utils/format'
 import { PROJECT_STATUS_LABELS, PROJECT_STATUS_TONES } from '@shared/utils/projectStatus'
 import { evaluateProjectDss } from '@shared/utils/decisionSupport'
@@ -36,6 +36,10 @@ function Field({ label, children }) {
 // during an incident/breach investigation. The only write is the admin's
 // "Edit Project" correction of the project's details and documents
 // (EditProjectModal).
+const UPDATES_SELECT = `id, progress_percentage, narrative_report, issues_encountered, report_date, created_at,
+  ai_analysis_status, ai_analysis_result,
+  reporter:profiles!project_updates_reported_by_fkey(full_name)`
+
 export default function AdminProjectDetail() {
   const { projectId } = useParams()
   const toast = useToast()
@@ -48,11 +52,23 @@ export default function AdminProjectDetail() {
   const [updates, setUpdates] = useState([])
   const [images, setImages] = useState([])
   const [statusHistory, setStatusHistory] = useState([])
-  const [retryingImageId, setRetryingImageId] = useState(null)
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
   const [locationOpen, setLocationOpen] = useState(false)
+  const [compareUpdateId, setCompareUpdateId] = useState(null)
+
+  // loadData() swaps the whole page for a loading state, so the comparison
+  // modal refreshes just the updates list instead.
+  async function reloadUpdates() {
+    const { data } = await supabase
+      .from('project_updates')
+      .select(UPDATES_SELECT)
+      .eq('project_id', projectId)
+      .order('report_date', { ascending: false })
+      .order('created_at', { ascending: false })
+    if (data) setUpdates(data)
+  }
 
   async function loadData() {
     setLoading(true)
@@ -116,16 +132,14 @@ export default function AdminProjectDetail() {
         .order('created_at', { ascending: false }),
       supabase
         .from('project_updates')
-        .select(
-          `id, progress_percentage, narrative_report, issues_encountered, report_date,
-           reporter:profiles!project_updates_reported_by_fkey(full_name)`,
-        )
+        .select(UPDATES_SELECT)
         .eq('project_id', projectId)
-        .order('report_date', { ascending: false }),
+        .order('report_date', { ascending: false })
+        .order('created_at', { ascending: false }),
       supabase
         .from('project_images')
         .select(
-          `id, project_update_id, storage_path, file_name, image_stage, ai_analysis_status, ai_analysis_result, created_at,
+          `id, project_update_id, storage_path, file_name, image_stage, ai_analysis_status, ai_analysis_result, created_at, latitude, longitude,
            uploader:profiles!project_images_uploaded_by_fkey(full_name)`,
         )
         .eq('project_id', projectId)
@@ -176,19 +190,6 @@ export default function AdminProjectDetail() {
   // the cause, e.g. configuring the API key, so being able to retry from here
   // saves a round trip through Engineering. Reloads everything afterwards
   // since this page has no images-only loader.
-  async function handleRetryAnalysis(imageId) {
-    setRetryingImageId(imageId)
-    const outcome = await analyzeProjectImage(imageId)
-    await loadData()
-    setRetryingImageId(null)
-
-    if (outcome?.status === 'PROCESSED') {
-      toast.success('AI analysis complete')
-      return
-    }
-    toast.error('AI analysis failed again', outcome?.result?.error ?? 'The photo itself is unaffected.')
-  }
-
   async function handleViewDocument(doc) {
     const { data, error } = await supabase.storage.from('project-documents').createSignedUrl(doc.storage_path, 300)
     if (error || !data?.signedUrl) {
@@ -358,12 +359,26 @@ export default function AdminProjectDetail() {
               {updates.map((entry) => (
                 <li key={entry.id} className="rounded-md border border-slate-100 bg-slate-50 p-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-sm font-medium text-slate-800">
+                    <span className="flex items-center gap-2 text-sm font-medium text-slate-800">
                       {entry.progress_percentage != null ? `${entry.progress_percentage}% complete` : 'Update'}
+                      {entry.id === updates[0]?.id ? <Badge tone="blue">New</Badge> : null}
                     </span>
                     <span className="text-xs text-slate-500">{formatDate(entry.report_date)}</span>
                   </div>
                   <p className="mt-1 text-xs text-slate-500">by {entry.reporter?.full_name ?? '—'}</p>
+                  <UpdateAnalysisFlag update={entry} />
+                  {images.some((image) => image.project_update_id === entry.id) ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      icon={Images}
+                      className="mt-2"
+                      onClick={() => setCompareUpdateId(entry.id)}
+                    >
+                      Compare with previous photos
+                    </Button>
+                  ) : null}
                   {entry.narrative_report ? (
                     <p className="mt-1 text-sm text-slate-700">{entry.narrative_report}</p>
                   ) : null}
@@ -386,11 +401,7 @@ export default function AdminProjectDetail() {
             <p className="mt-3 text-sm text-slate-500">No site photos uploaded yet.</p>
           ) : (
             <div className="mt-4">
-              <SitePhotoGrid
-              images={images}
-              onRetryAnalysis={handleRetryAnalysis}
-              retryingImageId={retryingImageId}
-            />
+              <SitePhotoGrid images={images} />
             </div>
           )}
         </section>
@@ -441,6 +452,18 @@ export default function AdminProjectDetail() {
           )}
         </section>
       </div>
+
+      {compareUpdateId && updates.some((entry) => entry.id === compareUpdateId) ? (
+        <UpdateComparisonModal
+          key={compareUpdateId}
+          update={updates.find((entry) => entry.id === compareUpdateId)}
+          updates={updates}
+          images={images}
+          isNew={compareUpdateId === updates[0]?.id}
+          onClose={() => setCompareUpdateId(null)}
+          onAnalyzed={reloadUpdates}
+        />
+      ) : null}
 
       <LocationModal open={locationOpen} project={project} onClose={() => setLocationOpen(false)} />
       <EditProjectModal

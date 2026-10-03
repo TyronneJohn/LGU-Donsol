@@ -1,5 +1,5 @@
 // Client-side entry point for the real Gemini-backed AI image analysis. This
-// only invokes the analyze-project-image Supabase Edge Function — it never
+// only invokes the analyze-project-update Supabase Edge Function — it never
 // talks to Gemini directly and never sees GEMINI_API_KEY, which is read
 // server-side only (Deno.env.get('GEMINI_API_KEY') in the Edge Function).
 //
@@ -11,16 +11,18 @@
 // happened before this is called.
 import { supabase } from '@shared/lib/supabaseClient'
 
-export async function analyzeProjectImage(imageId) {
+// One combined analysis for a whole monitoring update: its photos compared
+// with photos from every earlier update (analyze-project-update).
+export async function analyzeProjectUpdate(updateId) {
   try {
-    const { data, error } = await supabase.functions.invoke('analyze-project-image', {
-      body: { image_id: imageId },
+    const { data, error } = await supabase.functions.invoke('analyze-project-update', {
+      body: { update_id: updateId },
     })
     if (error) {
-      return { status: 'FAILED', result: { error: error.message ?? 'AI analysis request failed.' } }
+      return { status: 'FAILED', result: { error: error.message ?? 'AI comparison request failed.' } }
     }
     return data
   } catch (err) {
-    return { status: 'FAILED', result: { error: err?.message ?? 'AI analysis request failed.' } }
+    return { status: 'FAILED', result: { error: err?.message ?? 'AI comparison request failed.' } }
   }
 }

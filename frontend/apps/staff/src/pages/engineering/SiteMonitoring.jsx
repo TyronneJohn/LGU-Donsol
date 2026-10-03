@@ -16,6 +16,13 @@ import {
   SITE_MONITORING_VISIBLE_STATUSES,
 } from '@shared/utils/projectStatus'
 import { DSS_DECISION_LABELS, getDssSeverityTone } from '@shared/utils/decisionSupport'
+import { ROLES } from '../../utils/roles'
+import {
+  UPDATE_REQUEST_PREFIX,
+  UPDATE_REQUEST_STATE_LABELS,
+  UPDATE_REQUEST_STATE_TONES,
+  getUpdateRequestStatus,
+} from '../../utils/updateRequests'
 
 export default function SiteMonitoring() {
   const toast = useToast()
@@ -71,17 +78,38 @@ export default function SiteMonitoring() {
       return
     }
 
-    const { data: updateRows, error: updatesError } = await supabase
-      .from('project_updates')
-      .select('project_id, progress_percentage, report_date')
-      .in(
-        'project_id',
-        rows.map((p) => p.id),
-      )
-      .order('report_date', { ascending: false })
+    const projectIds = rows.map((p) => p.id)
+    const [{ data: updateRows, error: updatesError }, { data: requestRows, error: requestsError }] =
+      await Promise.all([
+        supabase
+          .from('project_updates')
+          .select('project_id, progress_percentage, report_date, created_at')
+          .in('project_id', projectIds)
+          .order('report_date', { ascending: false }),
+        // MPDC's "Request Update" messages, newest first — see
+        // ProjectMonitoringDetail's loadUpdateRequest.
+        supabase
+          .from('messages')
+          .select('project_id, created_at')
+          .in('project_id', projectIds)
+          .eq('sender_role', ROLES.MPDC)
+          .eq('recipient_role', ROLES.ENGINEERING)
+          .like('body', `${UPDATE_REQUEST_PREFIX}%`)
+          .order('created_at', { ascending: false }),
+      ])
 
     if (updatesError) {
       toast.error('Could not load monitoring updates', updatesError.message)
+    }
+    if (requestsError) {
+      toast.error('Could not load update requests', requestsError.message)
+    }
+
+    const latestRequestByProject = new Map()
+    for (const request of requestRows ?? []) {
+      if (!latestRequestByProject.has(request.project_id)) {
+        latestRequestByProject.set(request.project_id, request.created_at)
+      }
     }
 
     const latestByProject = new Map()
@@ -95,9 +123,14 @@ export default function SiteMonitoring() {
     setProjects(
       rows.map((project) => {
         const updates = latestByProject.get(project.id) ?? []
+        const lastUpdateAt = updates.reduce(
+          (latest, entry) => (!latest || entry.created_at > latest ? entry.created_at : latest),
+          null,
+        )
         return {
           ...project,
           latestUpdate: updates[0] ?? null,
+          updateRequest: getUpdateRequestStatus(latestRequestByProject.get(project.id), lastUpdateAt),
         }
       }),
     )
@@ -146,6 +179,7 @@ export default function SiteMonitoring() {
                 <th className="px-4 py-2.5 font-medium">Status</th>
                 <th className="px-4 py-2.5 font-medium">Progress</th>
                 <th className="px-4 py-2.5 font-medium">Last Update</th>
+                <th className="px-4 py-2.5 font-medium">MPDC Request</th>
                 <th className="px-4 py-2.5 font-medium">DSS Decision</th>
                 <th className="px-4 py-2.5 font-medium" />
               </tr>
@@ -167,6 +201,22 @@ export default function SiteMonitoring() {
                   </td>
                   <td className="px-4 py-2.5 text-slate-600">
                     {project.latestUpdate ? formatDate(project.latestUpdate.report_date) : '—'}
+                  </td>
+                  <td className="px-4 py-2.5">
+                    {project.updateRequest ? (
+                      <div className="flex flex-col items-start gap-0.5">
+                        <Badge tone={UPDATE_REQUEST_STATE_TONES[project.updateRequest.state]}>
+                          {UPDATE_REQUEST_STATE_LABELS[project.updateRequest.state]}
+                        </Badge>
+                        <span className="text-xs text-slate-500">
+                          {project.updateRequest.daysPending > 0
+                            ? `${project.updateRequest.daysPending} ${project.updateRequest.daysPending === 1 ? 'day' : 'days'} pending`
+                            : 'Requested today'}
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="text-slate-400">—</span>
+                    )}
                   </td>
                   <td className="px-4 py-2.5">
                     {project.dss_decision ? (

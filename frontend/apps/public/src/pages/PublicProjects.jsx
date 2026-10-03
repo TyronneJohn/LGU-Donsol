@@ -1,5 +1,17 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Camera, ChevronRight, ClipboardList, FolderKanban, Landmark, MapPin, Search, X } from 'lucide-react'
+import { createPortal } from 'react-dom'
+import {
+  ArrowLeft,
+  Camera,
+  ChevronLeft,
+  ChevronRight,
+  ClipboardList,
+  FolderKanban,
+  Landmark,
+  MapPin,
+  Search,
+  X,
+} from 'lucide-react'
 import { supabase } from '@shared/lib/supabaseClient'
 import { formatCurrency, formatDate } from '@shared/utils/format'
 import {
@@ -302,11 +314,6 @@ export default function PublicProjects() {
                               <span className="mx-1.5 text-slate-300">→</span>
                               {formatDate(project.end_date_planned)}
                             </p>
-                            {project.status === 'COMPLETED' ? (
-                              <p className="mt-0.5 text-xs text-emerald-600">
-                                Completed {formatDate(project.end_date_actual)}
-                              </p>
-                            ) : null}
                           </td>
                           <td className="px-4 py-3">
                             <Badge tone={PROJECT_STATUS_TONES[project.status]}>
@@ -347,6 +354,10 @@ export default function PublicProjects() {
 }
 
 function PublicProjectDetail({ project, onClose }) {
+  const { loading, data, photos, photosLoading } = useProjectTransparency(project.id)
+  const [photosOpen, setPhotosOpen] = useState(false)
+  const photoGroups = useMemo(() => groupPhotosByUpdate(photos, data?.updates ?? []), [photos, data])
+
   useEffect(() => {
     function handleKeyDown(event) {
       if (event.key === 'Escape') onClose()
@@ -417,7 +428,7 @@ function PublicProjectDetail({ project, onClose }) {
             <Field label="Published">{formatDate(project.published_at)}</Field>
           </div>
 
-          <ProjectTransparency projectId={project.id} />
+          <ProjectTransparency loading={loading} data={data} />
 
           <div className="border-t border-slate-100 pt-4">
             <h3 className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-slate-800">
@@ -436,10 +447,21 @@ function PublicProjectDetail({ project, onClose }) {
             <ProjectMap
               projects={isWithinDonsol(project.latitude, project.longitude) ? [project] : []}
               height="min(360px, 45vh)"
+              renderCardFooter={() => (
+                <ProjectPhotosButton
+                  loading={loading || photosLoading}
+                  count={photos.length}
+                  onClick={() => setPhotosOpen(true)}
+                />
+              )}
             />
           </div>
         </div>
       </div>
+
+      {photosOpen ? (
+        <ProjectPhotosDialog title={project.title} groups={photoGroups} onClose={() => setPhotosOpen(false)} />
+      ) : null}
     </div>
   )
 }
@@ -456,30 +478,36 @@ function Field({ label, children }) {
 // Only BEFORE/DURING/AFTER photos are ever returned by
 // get_public_project_transparency(); ISSUE/OTHER stay internal.
 const PHOTO_STAGE_LABELS = { BEFORE: 'Before', DURING: 'During', AFTER: 'After' }
-const PHOTO_STAGE_ORDER = ['BEFORE', 'DURING', 'AFTER']
 
 // Budget utilization, procurement, progress reports and site photos for one
 // published project. Everything comes from the get_public_project_transparency()
-// RPC (20261003100000_public_project_transparency.sql), which returns a curated
+// RPC (20261004140000_public_photos_by_update.sql), which returns a curated
 // field list and only for visibility = 'PUBLIC' projects. The public site
 // never reads procurement / project_updates / project_images directly.
-function ProjectTransparency({ projectId }) {
+// Photos are shown from the map pin's card (ProjectPhotosDialog), not inline.
+function useProjectTransparency(projectId) {
   const [loading, setLoading] = useState(true)
   const [data, setData] = useState(null)
   const [photos, setPhotos] = useState([])
+  const [photosLoading, setPhotosLoading] = useState(true)
 
   useEffect(() => {
     let cancelled = false
 
     async function load() {
       setLoading(true)
+      setPhotosLoading(true)
+      setPhotos([])
       const { data: doc, error } = await supabase.rpc('get_public_project_transparency', {
         p_project_id: projectId,
       })
       if (cancelled) return
       setData(error ? null : doc)
       setLoading(false)
-      if (error || !doc) return
+      if (error || !doc) {
+        setPhotosLoading(false)
+        return
+      }
 
       const withUrls = await Promise.all(
         (doc.photos ?? []).map(async (photo) => {
@@ -489,7 +517,9 @@ function ProjectTransparency({ projectId }) {
           return { ...photo, signedUrl: signed?.signedUrl ?? null }
         }),
       )
-      if (!cancelled) setPhotos(withUrls.filter((photo) => photo.signedUrl))
+      if (cancelled) return
+      setPhotos(withUrls.filter((photo) => photo.signedUrl))
+      setPhotosLoading(false)
     }
 
     load()
@@ -498,6 +528,10 @@ function ProjectTransparency({ projectId }) {
     }
   }, [projectId])
 
+  return { loading, data, photos, photosLoading }
+}
+
+function ProjectTransparency({ loading, data }) {
   if (loading) {
     return (
       <div className="mb-4 border-t border-slate-100 pt-4">
@@ -512,8 +546,213 @@ function ProjectTransparency({ projectId }) {
     <>
       <BudgetUtilization data={data} />
       <ProgressReports progress={data.progress_percentage} updates={data.updates ?? []} />
-      <SitePhotos photos={photos} />
     </>
+  )
+}
+
+// One group per progress report (newest first, matching the Physical
+// Progress list), each holding the photos uploaded with it. Photos not tied
+// to a published report (e.g. uploaded straight to the project) go last.
+function groupPhotosByUpdate(photos, updates) {
+  const byUpdate = new Map()
+  for (const photo of photos) {
+    const key = photo.project_update_id ?? null
+    if (!byUpdate.has(key)) byUpdate.set(key, [])
+    byUpdate.get(key).push(photo)
+  }
+
+  const groups = []
+  for (const update of updates) {
+    const updatePhotos = byUpdate.get(update.id)
+    if (!updatePhotos) continue
+    byUpdate.delete(update.id)
+    groups.push({
+      key: update.id,
+      label: `Progress report · ${formatDate(update.report_date)}`,
+      progress: update.progress_percentage,
+      photos: updatePhotos,
+    })
+  }
+
+  const rest = [...byUpdate.values()].flat()
+  if (rest.length > 0) {
+    groups.push({ key: 'other', label: 'Other site photos', progress: null, photos: rest })
+  }
+  return groups
+}
+
+function photoAlt(photo) {
+  return `${PHOTO_STAGE_LABELS[photo.image_stage] ?? 'Site'} photo, ${formatDate(photo.captured_at)}`
+}
+
+function photoCaption(photo) {
+  const stage = PHOTO_STAGE_LABELS[photo.image_stage]
+  return `${stage ? `${stage} · ` : ''}${formatDate(photo.captured_at)}`
+}
+
+// Rendered inside the map pin's details card (ProjectMap renderCardFooter).
+function ProjectPhotosButton({ loading, count, onClick }) {
+  if (loading) return <p className="text-xs text-slate-400">Loading project photos...</p>
+  if (count === 0) return <p className="text-xs text-slate-400">No project photos posted yet.</p>
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex w-full items-center justify-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700"
+    >
+      <Camera className="h-3.5 w-3.5" aria-hidden="true" />
+      View Project Photos ({count})
+    </button>
+  )
+}
+
+// Opened from the map pin's card. Portaled to <body> at z-1100 so it sits
+// above both the project modal and Leaflet's own layers. Keys are caught in
+// the capture phase so Esc closes only this, not the project modal under it.
+function ProjectPhotosDialog({ title, groups, onClose }) {
+  const flat = useMemo(() => groups.flatMap((group) => group.photos.map((photo) => ({ ...photo, group }))), [groups])
+  const [index, setIndex] = useState(null)
+  const viewing = index === null ? null : flat[index]
+
+  useEffect(() => {
+    function handleKeyDown(event) {
+      if (event.key === 'Escape') {
+        event.stopPropagation()
+        if (index === null) onClose()
+        else setIndex(null)
+      } else if (index !== null && event.key === 'ArrowRight') {
+        setIndex((i) => (i + 1) % flat.length)
+      } else if (index !== null && event.key === 'ArrowLeft') {
+        setIndex((i) => (i - 1 + flat.length) % flat.length)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown, true)
+    return () => window.removeEventListener('keydown', handleKeyDown, true)
+  }, [index, flat.length, onClose])
+
+  const step = (delta) => setIndex((i) => (i + delta + flat.length) % flat.length)
+
+  return createPortal(
+    <div className="fixed inset-0 z-1100 flex items-center justify-center px-4">
+      <button
+        type="button"
+        aria-label="Close project photos"
+        onClick={onClose}
+        className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm"
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="public-project-photos-title"
+        className="relative flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-900/5"
+      >
+        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 px-5 pb-3 pt-5">
+          <div className="flex min-w-0 items-start gap-2">
+            {viewing ? (
+              <button
+                type="button"
+                aria-label="Back to all photos"
+                onClick={() => setIndex(null)}
+                className="-ml-1 shrink-0 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+              >
+                <ArrowLeft className="h-5 w-5" aria-hidden="true" />
+              </button>
+            ) : null}
+            <div className="min-w-0">
+              <h2
+                id="public-project-photos-title"
+                className="flex items-center gap-1.5 text-base font-semibold text-slate-800"
+              >
+                <Camera className="h-4 w-4 shrink-0 text-blue-600" aria-hidden="true" />
+                Project Photos
+              </h2>
+              <p className="mt-0.5 truncate text-xs text-slate-500">{title}</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={onClose}
+            className="shrink-0 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+          >
+            <X className="h-5 w-5" aria-hidden="true" />
+          </button>
+        </div>
+
+        {viewing ? (
+          <div className="flex min-h-0 flex-1 flex-col px-5 pb-5 pt-4">
+            <div className="relative flex min-h-0 flex-1 items-center justify-center rounded-lg bg-slate-900">
+              <img
+                src={viewing.signedUrl}
+                alt={photoAlt(viewing)}
+                className="max-h-[60vh] w-auto max-w-full object-contain"
+              />
+              {flat.length > 1 ? (
+                <>
+                  <button
+                    type="button"
+                    aria-label="Previous photo"
+                    onClick={() => step(-1)}
+                    className="absolute left-2 top-1/2 -translate-y-1/2 rounded-full bg-white/85 p-1.5 text-slate-700 shadow hover:bg-white"
+                  >
+                    <ChevronLeft className="h-5 w-5" aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Next photo"
+                    onClick={() => step(1)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full bg-white/85 p-1.5 text-slate-700 shadow hover:bg-white"
+                  >
+                    <ChevronRight className="h-5 w-5" aria-hidden="true" />
+                  </button>
+                </>
+              ) : null}
+            </div>
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+              <span>
+                {viewing.group.label} · {photoCaption(viewing)}
+              </span>
+              <span className="tabular-nums">
+                {index + 1} / {flat.length}
+              </span>
+            </div>
+          </div>
+        ) : (
+          <div className="overflow-y-auto px-5 pb-5 pt-4">
+            {groups.map((group) => (
+              <section key={group.key} className="mb-5 last:mb-0">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-xs font-semibold text-slate-600">{group.label}</h3>
+                  {hasValue(group.progress) ? (
+                    <Badge tone="blue">{Number(group.progress).toFixed(0)}%</Badge>
+                  ) : null}
+                </div>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {group.photos.map((photo) => (
+                    <button
+                      key={photo.id}
+                      type="button"
+                      onClick={() => setIndex(flat.findIndex((p) => p.id === photo.id))}
+                      className="group block overflow-hidden rounded-lg border border-slate-200 text-left"
+                    >
+                      <img
+                        src={photo.signedUrl}
+                        alt={photoAlt(photo)}
+                        loading="lazy"
+                        className="aspect-square w-full object-cover transition-transform group-hover:scale-105"
+                      />
+                      <p className="px-1.5 py-1 text-[11px] text-slate-500">{photoCaption(photo)}</p>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -626,47 +865,6 @@ function ProgressReports({ progress, updates }) {
           ))}
         </ol>
       )}
-    </div>
-  )
-}
-
-function SitePhotos({ photos }) {
-  if (photos.length === 0) return null
-
-  return (
-    <div className="mb-4 border-t border-slate-100 pt-4">
-      <h3 className="mb-3 flex items-center gap-1.5 text-sm font-semibold text-slate-800">
-        <Camera className="h-4 w-4 text-blue-600" aria-hidden="true" />
-        Site Photos
-      </h3>
-      {PHOTO_STAGE_ORDER.map((stage) => {
-        const stagePhotos = photos.filter((photo) => photo.image_stage === stage)
-        if (stagePhotos.length === 0) return null
-        return (
-          <div key={stage} className="mb-3">
-            <p className="mb-1.5 text-xs font-medium text-slate-500">{PHOTO_STAGE_LABELS[stage]}</p>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {stagePhotos.map((photo) => (
-                <a
-                  key={photo.id}
-                  href={photo.signedUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="group block overflow-hidden rounded-lg border border-slate-200"
-                >
-                  <img
-                    src={photo.signedUrl}
-                    alt={`${PHOTO_STAGE_LABELS[stage]} photo, ${formatDate(photo.captured_at)}`}
-                    loading="lazy"
-                    className="aspect-square w-full object-cover transition-transform group-hover:scale-105"
-                  />
-                  <p className="px-1.5 py-1 text-[11px] text-slate-500">{formatDate(photo.captured_at)}</p>
-                </a>
-              ))}
-            </div>
-          </div>
-        )
-      })}
     </div>
   )
 }
