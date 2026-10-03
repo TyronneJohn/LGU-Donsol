@@ -26,7 +26,7 @@ export default function AuditLog() {
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [hasMore, setHasMore] = useState(true)
-  const [entityFilter, setEntityFilter] = useState('')
+  const [actorFilter, setActorFilter] = useState('')
   const [actionFilter, setActionFilter] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
@@ -34,11 +34,11 @@ export default function AuditLog() {
   function buildQuery(offset) {
     let query = supabase
       .from('audit_logs')
-      .select('id, action, entity_type, entity_id, description, created_at, actor:profiles!audit_logs_actor_id_fkey(full_name, role)')
+      .select(`id, action, entity_type, entity_id, description, created_at, actor:profiles!audit_logs_actor_id_fkey${actorFilter ? '!inner' : ''}(full_name, role)`)
       .order('created_at', { ascending: false })
       .range(offset, offset + PAGE_SIZE - 1)
 
-    if (entityFilter) query = query.eq('entity_type', entityFilter)
+    if (actorFilter) query = query.eq('actor.role', actorFilter)
     if (actionFilter) query = query.eq('action', actionFilter)
     if (dateFrom) query = query.gte('created_at', `${dateFrom}T00:00:00`)
     if (dateTo) query = query.lte('created_at', `${dateTo}T23:59:59`)
@@ -80,7 +80,7 @@ export default function AuditLog() {
 
   useEffect(() => {
     loadFirstPage()
-  }, [entityFilter, actionFilter, dateFrom, dateTo])
+  }, [actorFilter, actionFilter, dateFrom, dateTo])
 
   return (
     <div>
@@ -91,9 +91,9 @@ export default function AuditLog() {
       />
 
       <div className="mb-4 flex flex-wrap gap-3">
-        <select value={entityFilter} onChange={(event) => setEntityFilter(event.target.value)} className={selectClass}>
-          <option value="">All entities</option>
-          {Object.entries(ENTITY_TYPE_LABELS).map(([value, label]) => (
+        <select value={actorFilter} onChange={(event) => setActorFilter(event.target.value)} className={selectClass}>
+          <option value="">All actors</option>
+          {Object.entries(ROLE_LABELS).map(([value, label]) => (
             <option key={value} value={value}>
               {label}
             </option>

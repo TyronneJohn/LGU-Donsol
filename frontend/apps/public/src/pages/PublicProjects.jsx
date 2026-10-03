@@ -1,21 +1,47 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ChevronRight, FolderKanban, MapPin, Search, X } from 'lucide-react'
+import { Camera, ChevronRight, ClipboardList, FolderKanban, Landmark, MapPin, Search, X } from 'lucide-react'
 import { supabase } from '@shared/lib/supabaseClient'
 import { formatCurrency, formatDate } from '@shared/utils/format'
-import { PROJECT_STATUS_LABELS, PROJECT_STATUS_TONES } from '@shared/utils/projectStatus'
+import {
+  PROCUREMENT_STATUS_LABELS,
+  PROCUREMENT_STATUS_TONES,
+  PROJECT_STATUS_LABELS,
+  PROJECT_STATUS_TONES,
+  SECTOR_LABELS,
+  SECTOR_ORDER,
+} from '@shared/utils/projectStatus'
 import Badge from '@shared/components/ui/Badge'
 import { LoadingState } from '@shared/components/ui/LoadingState'
 import EmptyState from '@shared/components/ui/EmptyState'
 import ProjectMap from '@shared/components/ProjectMap'
 import { isWithinDonsol } from '@shared/utils/geo'
 
-const STATUS_FILTERS = ['ONGOING', 'COMPLETED']
+// Public rows can only exist from APPROVED onward (MPDC publishes while
+// APPROVED, and apply_monitoring_progress() auto-publishes at ONGOING), so
+// every published project is listed, whatever stage it is in — the same
+// scope as MPDC's physical 20% Development Fund transparency board.
+const STATUS_ORDER = Object.keys(PROJECT_STATUS_LABELS)
+
+// A/B/C grouping of the transparency board. Projects without a sector
+// (created before 20260824100000_project_sector.sql) fall into a last group.
+const SECTOR_GROUPS = [
+  ...SECTOR_ORDER.map((key, index) => ({
+    key,
+    label: `${String.fromCharCode(65 + index)}. ${SECTOR_LABELS[key]}`,
+  })),
+  { key: null, label: 'Other Projects' },
+]
+
+function budgetOf(project) {
+  return Number(project.approved_budget ?? project.estimated_cost ?? 0)
+}
 
 export default function PublicProjects() {
   const [projects, setProjects] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('ALL')
+  const [sectorFilter, setSectorFilter] = useState('ALL')
   const [barangayFilter, setBarangayFilter] = useState('ALL')
   const [selected, setSelected] = useState(null)
 
@@ -26,7 +52,7 @@ export default function PublicProjects() {
         .select('*')
         .order('published_at', { ascending: false })
 
-      if (!error) setProjects((data ?? []).filter((p) => STATUS_FILTERS.includes(p.status)))
+      if (!error) setProjects(data ?? [])
       setLoading(false)
     }
     loadProjects()
@@ -37,17 +63,38 @@ export default function PublicProjects() {
     [projects],
   )
 
+  const statuses = useMemo(
+    () => STATUS_ORDER.filter((status) => projects.some((p) => p.status === status)),
+    [projects],
+  )
+
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase()
     return projects.filter((project) => {
       if (statusFilter !== 'ALL' && project.status !== statusFilter) return false
+      if (sectorFilter !== 'ALL' && project.sector !== sectorFilter) return false
       if (barangayFilter !== 'ALL' && project.barangay !== barangayFilter) return false
       if (term && !`${project.title} ${project.project_code ?? ''}`.toLowerCase().includes(term)) {
         return false
       }
       return true
     })
-  }, [projects, search, statusFilter, barangayFilter])
+  }, [projects, search, statusFilter, sectorFilter, barangayFilter])
+
+  const groups = useMemo(
+    () =>
+      SECTOR_GROUPS.map((group) => {
+        const groupProjects = filtered.filter((p) => (p.sector ?? null) === group.key)
+        return {
+          ...group,
+          projects: groupProjects,
+          subtotal: groupProjects.reduce((sum, p) => sum + budgetOf(p), 0),
+        }
+      }).filter((group) => group.projects.length > 0),
+    [filtered],
+  )
+
+  const grandTotal = useMemo(() => filtered.reduce((sum, p) => sum + budgetOf(p), 0), [filtered])
 
   return (
     <div>
@@ -81,9 +128,21 @@ export default function PublicProjects() {
             className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           >
             <option value="ALL">All statuses</option>
-            {STATUS_FILTERS.map((status) => (
+            {statuses.map((status) => (
               <option key={status} value={status}>
                 {PROJECT_STATUS_LABELS[status] ?? status}
+              </option>
+            ))}
+          </select>
+          <select
+            value={sectorFilter}
+            onChange={(event) => setSectorFilter(event.target.value)}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          >
+            <option value="ALL">All sectors</option>
+            {SECTOR_ORDER.map((sector) => (
+              <option key={sector} value={sector}>
+                {SECTOR_LABELS[sector]}
               </option>
             ))}
           </select>
@@ -129,50 +188,64 @@ export default function PublicProjects() {
 
               {/* Below laptop width, one card per project — nine table columns can't fit
                   a phone or tablet screen without sideways scrolling. */}
-              <ul className="grid gap-3 sm:grid-cols-2 lg:hidden">
-                {filtered.map((project) => (
-                  <li key={project.id}>
-                    <button
-                      type="button"
-                      onClick={() => setSelected(project)}
-                      className="flex h-full w-full flex-col rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm hover:border-blue-300 hover:bg-blue-50/40"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <p className="font-medium text-slate-800">{project.title}</p>
-                        <Badge tone={PROJECT_STATUS_TONES[project.status]}>
-                          {PROJECT_STATUS_LABELS[project.status] ?? project.status}
-                        </Badge>
-                      </div>
-                      <p className="mt-0.5 text-xs text-slate-500">
-                        {project.project_code}
-                        {project.barangay ? ` · Brgy. ${project.barangay}` : ''}
-                      </p>
-                      <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
-                        <div>
-                          <dt className="text-xs text-slate-400">Approved Budget</dt>
-                          <dd className="text-slate-700">{formatCurrency(project.approved_budget ?? project.estimated_cost)}</dd>
-                        </div>
-                        <div>
-                          <dt className="text-xs text-slate-400">Fund Source</dt>
-                          <dd className="text-slate-700">{project.funding_source || '—'}</dd>
-                        </div>
-                        <div>
-                          <dt className="text-xs text-slate-400">Target Start</dt>
-                          <dd className="text-slate-700">{formatDate(project.start_date_planned)}</dd>
-                        </div>
-                        <div>
-                          <dt className="text-xs text-slate-400">
-                            {project.status === 'COMPLETED' ? 'Date Completed' : 'Target Completion'}
-                          </dt>
-                          <dd className="text-slate-700">
-                            {formatDate(project.status === 'COMPLETED' ? project.end_date_actual : project.end_date_planned)}
-                          </dd>
-                        </div>
-                      </dl>
-                    </button>
-                  </li>
+              <div className="space-y-5 lg:hidden">
+                {groups.map((group) => (
+                  <section key={group.key ?? 'other'}>
+                    <div className="mb-2 flex items-baseline justify-between gap-3 rounded-lg bg-white/95 px-3 py-2 shadow-sm">
+                      <h2 className="text-sm font-semibold text-blue-900">{group.label}</h2>
+                      <p className="text-sm font-semibold tabular-nums text-slate-700">{formatCurrency(group.subtotal)}</p>
+                    </div>
+                    <ul className="grid gap-3 sm:grid-cols-2">
+                      {group.projects.map((project) => (
+                        <li key={project.id}>
+                          <button
+                            type="button"
+                            onClick={() => setSelected(project)}
+                            className="flex h-full w-full flex-col rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm hover:border-blue-300 hover:bg-blue-50/40"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <p className="font-medium text-slate-800">{project.title}</p>
+                              <Badge tone={PROJECT_STATUS_TONES[project.status]}>
+                                {PROJECT_STATUS_LABELS[project.status] ?? project.status}
+                              </Badge>
+                            </div>
+                            <p className="mt-0.5 text-xs text-slate-500">
+                              {project.project_code}
+                              {project.barangay ? ` · Brgy. ${project.barangay}` : ''}
+                            </p>
+                            <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
+                              <div>
+                                <dt className="text-xs text-slate-400">Approved Budget</dt>
+                                <dd className="text-slate-700">{formatCurrency(project.approved_budget ?? project.estimated_cost)}</dd>
+                              </div>
+                              <div>
+                                <dt className="text-xs text-slate-400">Fund Source</dt>
+                                <dd className="text-slate-700">{project.funding_source || '—'}</dd>
+                              </div>
+                              <div>
+                                <dt className="text-xs text-slate-400">Target Start</dt>
+                                <dd className="text-slate-700">{formatDate(project.start_date_planned)}</dd>
+                              </div>
+                              <div>
+                                <dt className="text-xs text-slate-400">
+                                  {project.status === 'COMPLETED' ? 'Date Completed' : 'Target Completion'}
+                                </dt>
+                                <dd className="text-slate-700">
+                                  {formatDate(project.status === 'COMPLETED' ? project.end_date_actual : project.end_date_planned)}
+                                </dd>
+                              </div>
+                            </dl>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
                 ))}
-              </ul>
+                <div className="flex items-baseline justify-between gap-3 rounded-lg bg-blue-900 px-3 py-2.5 text-white shadow-sm">
+                  <p className="text-sm font-semibold uppercase tracking-wide">Total</p>
+                  <p className="text-sm font-semibold tabular-nums">{formatCurrency(grandTotal)}</p>
+                </div>
+              </div>
 
               <div className="hidden overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm lg:block">
                 <div className="overflow-x-auto">
@@ -188,8 +261,20 @@ export default function PublicProjects() {
                         <th scope="col" className="w-10 px-2 py-3"><span className="sr-only">Open</span></th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-300">
-                      {filtered.map((project) => (
+                    {groups.map((group) => (
+                    <tbody key={group.key ?? 'other'} className="divide-y divide-slate-300 border-t border-slate-300">
+                      <tr className="bg-blue-50">
+                        <th scope="colgroup" colSpan={2} className="px-4 py-2 text-left text-sm font-semibold text-blue-900">
+                          {group.label}
+                        </th>
+                        <td className="px-4 py-2 whitespace-nowrap text-right font-semibold tabular-nums text-blue-900">
+                          {formatCurrency(group.subtotal)}
+                        </td>
+                        <td colSpan={4} className="px-4 py-2 text-xs text-slate-500">
+                          {group.projects.length} {group.projects.length === 1 ? 'project' : 'projects'}
+                        </td>
+                      </tr>
+                      {group.projects.map((project) => (
                         <tr
                           key={project.id}
                           tabIndex={0}
@@ -234,6 +319,18 @@ export default function PublicProjects() {
                         </tr>
                       ))}
                     </tbody>
+                    ))}
+                    <tfoot className="border-t-2 border-blue-800 bg-blue-900 text-white">
+                      <tr>
+                        <th scope="row" colSpan={2} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide">
+                          Total
+                        </th>
+                        <td className="px-4 py-3 whitespace-nowrap text-right font-semibold tabular-nums">
+                          {formatCurrency(grandTotal)}
+                        </td>
+                        <td colSpan={4} />
+                      </tr>
+                    </tfoot>
                   </table>
                 </div>
               </div>
@@ -305,6 +402,7 @@ function PublicProjectDetail({ project, onClose }) {
           ) : null}
 
           <div className="mb-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
+            <Field label="Sector">{SECTOR_LABELS[project.sector] ?? '—'}</Field>
             <Field label="Category">{project.project_category || '—'}</Field>
             <Field label="Funding Source">{project.funding_source || '—'}</Field>
             <Field label="Budget">{formatCurrency(project.approved_budget ?? project.estimated_cost)}</Field>
@@ -318,6 +416,8 @@ function PublicProjectDetail({ project, onClose }) {
             ) : null}
             <Field label="Published">{formatDate(project.published_at)}</Field>
           </div>
+
+          <ProjectTransparency projectId={project.id} />
 
           <div className="border-t border-slate-100 pt-4">
             <h3 className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-slate-800">
@@ -349,6 +449,233 @@ function Field({ label, children }) {
     <div>
       <p className="text-xs text-slate-400">{label}</p>
       <p className="mt-0.5 text-slate-700">{children}</p>
+    </div>
+  )
+}
+
+// Only BEFORE/DURING/AFTER photos are ever returned by
+// get_public_project_transparency(); ISSUE/OTHER stay internal.
+const PHOTO_STAGE_LABELS = { BEFORE: 'Before', DURING: 'During', AFTER: 'After' }
+const PHOTO_STAGE_ORDER = ['BEFORE', 'DURING', 'AFTER']
+
+// Budget utilization, procurement, progress reports and site photos for one
+// published project. Everything comes from the get_public_project_transparency()
+// RPC (20261003100000_public_project_transparency.sql), which returns a curated
+// field list and only for visibility = 'PUBLIC' projects. The public site
+// never reads procurement / project_updates / project_images directly.
+function ProjectTransparency({ projectId }) {
+  const [loading, setLoading] = useState(true)
+  const [data, setData] = useState(null)
+  const [photos, setPhotos] = useState([])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function load() {
+      setLoading(true)
+      const { data: doc, error } = await supabase.rpc('get_public_project_transparency', {
+        p_project_id: projectId,
+      })
+      if (cancelled) return
+      setData(error ? null : doc)
+      setLoading(false)
+      if (error || !doc) return
+
+      const withUrls = await Promise.all(
+        (doc.photos ?? []).map(async (photo) => {
+          const { data: signed } = await supabase.storage
+            .from('project-images')
+            .createSignedUrl(photo.storage_path, 3600)
+          return { ...photo, signedUrl: signed?.signedUrl ?? null }
+        }),
+      )
+      if (!cancelled) setPhotos(withUrls.filter((photo) => photo.signedUrl))
+    }
+
+    load()
+    return () => {
+      cancelled = true
+    }
+  }, [projectId])
+
+  if (loading) {
+    return (
+      <div className="mb-4 border-t border-slate-100 pt-4">
+        <LoadingState label="Loading budget and progress details..." />
+      </div>
+    )
+  }
+
+  if (!data) return null
+
+  return (
+    <>
+      <BudgetUtilization data={data} />
+      <ProgressReports progress={data.progress_percentage} updates={data.updates ?? []} />
+      <SitePhotos photos={photos} />
+    </>
+  )
+}
+
+function hasValue(value) {
+  return value !== null && value !== undefined
+}
+
+function BudgetUtilization({ data }) {
+  const contract = data.contract
+  const budget = data.approved_budget
+  const contractAmount = contract?.awarded ? contract.contract_amount : null
+  const share =
+    budget && hasValue(contractAmount) ? Math.min(100, Math.max(0, (contractAmount / budget) * 100)) : null
+
+  return (
+    <div className="mb-4 border-t border-slate-100 pt-4">
+      <h3 className="mb-3 flex items-center gap-1.5 text-sm font-semibold text-slate-800">
+        <Landmark className="h-4 w-4 text-blue-600" aria-hidden="true" />
+        Budget Utilization
+      </h3>
+
+      <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+        <Stat label="Approved Budget" value={formatCurrency(budget)} />
+        <Stat
+          label="Contract Amount"
+          value={hasValue(contractAmount) ? formatCurrency(contractAmount) : 'Not yet awarded'}
+        />
+      </div>
+
+      {share !== null ? (
+        <div className="mt-3">
+          <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+            <div className="h-full rounded-full bg-blue-600" style={{ width: `${share}%` }} />
+          </div>
+          <p className="mt-1 text-xs text-slate-500">
+            Contract amount is {share.toFixed(1)}% of the approved budget.
+          </p>
+        </div>
+      ) : null}
+
+      {contract ? (
+        <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Procurement</p>
+            <Badge tone={PROCUREMENT_STATUS_TONES[contract.status]}>
+              {PROCUREMENT_STATUS_LABELS[contract.status] ?? contract.status}
+            </Badge>
+          </div>
+          <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
+            <Field label="Mode of Procurement">{contract.mode_of_procurement || '—'}</Field>
+            <Field label="Approved Budget for the Contract">{formatCurrency(contract.abc_amount)}</Field>
+            {contract.awarded ? (
+              <>
+                <Field label="Contractor">{contract.contractor_name || '—'}</Field>
+                <Field label="Contract No.">{contract.contract_number || '—'}</Field>
+                <Field label="Contract Signed">{formatDate(contract.contract_signed_date)}</Field>
+                <Field label="Notice to Proceed">{formatDate(contract.notice_to_proceed_date)}</Field>
+                <Field label="Contract Duration">
+                  {contract.contract_duration_days ? `${contract.contract_duration_days} days` : '—'}
+                </Field>
+                <Field label="Expected Completion">{formatDate(contract.expected_completion_date)}</Field>
+              </>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+    </div>
+  )
+}
+
+function ProgressReports({ progress, updates }) {
+  const percent = hasValue(progress) ? Number(progress) : null
+
+  return (
+    <div className="mb-4 border-t border-slate-100 pt-4">
+      <h3 className="mb-3 flex items-center gap-1.5 text-sm font-semibold text-slate-800">
+        <ClipboardList className="h-4 w-4 text-blue-600" aria-hidden="true" />
+        Physical Progress
+      </h3>
+
+      {percent !== null ? (
+        <div className="mb-3">
+          <div className="mb-1 flex justify-between text-xs text-slate-500">
+            <span>Accomplishment</span>
+            <span className="font-semibold text-slate-700">{percent.toFixed(0)}%</span>
+          </div>
+          <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+            <div className="h-full rounded-full bg-emerald-500" style={{ width: `${percent}%` }} />
+          </div>
+        </div>
+      ) : null}
+
+      {updates.length === 0 ? (
+        <p className="text-xs text-slate-500">No progress reports have been posted yet.</p>
+      ) : (
+        <ol className="space-y-2">
+          {updates.map((update) => (
+            <li key={update.id} className="rounded-lg border border-slate-200 p-3 text-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs font-medium text-slate-500">{formatDate(update.report_date)}</span>
+                {hasValue(update.progress_percentage) ? (
+                  <Badge tone="blue">{Number(update.progress_percentage).toFixed(0)}%</Badge>
+                ) : null}
+              </div>
+              {update.narrative_report ? (
+                <p className="mt-1.5 whitespace-pre-line text-slate-600">{update.narrative_report}</p>
+              ) : null}
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  )
+}
+
+function SitePhotos({ photos }) {
+  if (photos.length === 0) return null
+
+  return (
+    <div className="mb-4 border-t border-slate-100 pt-4">
+      <h3 className="mb-3 flex items-center gap-1.5 text-sm font-semibold text-slate-800">
+        <Camera className="h-4 w-4 text-blue-600" aria-hidden="true" />
+        Site Photos
+      </h3>
+      {PHOTO_STAGE_ORDER.map((stage) => {
+        const stagePhotos = photos.filter((photo) => photo.image_stage === stage)
+        if (stagePhotos.length === 0) return null
+        return (
+          <div key={stage} className="mb-3">
+            <p className="mb-1.5 text-xs font-medium text-slate-500">{PHOTO_STAGE_LABELS[stage]}</p>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {stagePhotos.map((photo) => (
+                <a
+                  key={photo.id}
+                  href={photo.signedUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="group block overflow-hidden rounded-lg border border-slate-200"
+                >
+                  <img
+                    src={photo.signedUrl}
+                    alt={`${PHOTO_STAGE_LABELS[stage]} photo, ${formatDate(photo.captured_at)}`}
+                    loading="lazy"
+                    className="aspect-square w-full object-cover transition-transform group-hover:scale-105"
+                  />
+                  <p className="px-1.5 py-1 text-[11px] text-slate-500">{formatDate(photo.captured_at)}</p>
+                </a>
+              ))}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function Stat({ label, value }) {
+  return (
+    <div className="rounded-lg border border-slate-200 p-3">
+      <p className="text-xs text-slate-400">{label}</p>
+      <p className="mt-0.5 font-semibold tabular-nums text-slate-800">{value}</p>
     </div>
   )
 }
