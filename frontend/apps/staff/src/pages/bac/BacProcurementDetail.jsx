@@ -99,7 +99,6 @@ export default function BacProcurementDetail() {
   const [notFound, setNotFound] = useState(false)
   const [project, setProject] = useState(null)
   const [procurement, setProcurement] = useState(null)
-  const [contractors, setContractors] = useState([])
   const [documents, setDocuments] = useState([])
 
   const [startForm, setStartForm] = useState(() => readDraft(startDraftKey(projectId)) ?? EMPTY_START_FORM)
@@ -109,7 +108,7 @@ export default function BacProcurementDetail() {
   const [savingDetails, setSavingDetails] = useState(false)
   const [isEditingDetails, setIsEditingDetails] = useState(false)
 
-  const [awardContractorId, setAwardContractorId] = useState('')
+  const [awardContractorName, setAwardContractorName] = useState('')
   const [awarding, setAwarding] = useState(false)
   const [isEditingAward, setIsEditingAward] = useState(false)
 
@@ -122,15 +121,6 @@ export default function BacProcurementDetail() {
 
   const [technicalDocuments, setTechnicalDocuments] = useState([])
   const [locationOpen, setLocationOpen] = useState(false)
-
-  async function loadContractors() {
-    const { data, error } = await supabase.from('contractors').select('id, name').order('name', { ascending: true })
-    if (error) {
-      toast.error('Could not load contractors', error.message)
-      return
-    }
-    setContractors(data ?? [])
-  }
 
   async function loadProcurementDetails(procurementId) {
     const { data, error } = await supabase
@@ -219,7 +209,7 @@ export default function BacProcurementDetail() {
       )
       if (editDraft) setIsEditingDetails(true)
 
-      setAwardContractorId(current.contractor_id ?? '')
+      setAwardContractorName(current.contractors?.name ?? '')
 
       const contractDraft = readDraft(contractDraftKey(projectId))
       setContractForm(
@@ -254,7 +244,6 @@ export default function BacProcurementDetail() {
       setDocuments([])
     }
 
-    await loadContractors()
     setLoading(false)
   }
 
@@ -374,26 +363,60 @@ export default function BacProcurementDetail() {
   }
 
   async function handleRecordAward() {
-    if (!awardContractorId) {
-      toast.error('Select a contractor', 'Choose the winning bidder before recording the award.')
+    const name = awardContractorName.trim().replace(/\s+/g, ' ')
+    if (!name) {
+      toast.error('Enter the winning bidder', 'Type the contractor or company name before recording the award.')
       return
     }
 
     const confirmed = await confirm({
       title: 'Record this award?',
-      description: 'This sets the winning contractor for the procurement cycle.',
+      description: `This sets ${name} as the winning bidder for the procurement cycle.`,
       confirmLabel: 'Record Award',
     })
     if (!confirmed) return
 
     setAwarding(true)
+
+    // BAC now just types the winning bidder's name, but procurement still
+    // points at a contractors row (the public view, notifications and
+    // reports all join through it). Reuse an existing row with the same
+    // name (case-insensitive) so repeat winners aren't duplicated; otherwise
+    // create one on the spot.
+    const escapedName = name.replace(/[\\%_]/g, (ch) => `\\${ch}`)
+    const { data: existing, error: lookupError } = await supabase
+      .from('contractors')
+      .select('id')
+      .ilike('name', escapedName)
+      .limit(1)
+    if (lookupError) {
+      setAwarding(false)
+      toast.error('Could not record award', lookupError.message)
+      return
+    }
+
+    let contractorId = existing?.[0]?.id
+    if (!contractorId) {
+      const { data: created, error: createError } = await supabase
+        .from('contractors')
+        .insert({ name })
+        .select('id')
+        .single()
+      if (createError) {
+        setAwarding(false)
+        toast.error('Could not record award', createError.message)
+        return
+      }
+      contractorId = created.id
+    }
+
     const nextStatus = ['NOT_STARTED', 'BIDDING', 'BID_EVALUATION'].includes(procurement.status)
       ? 'AWARDED'
       : procurement.status
 
     const { error } = await supabase
       .from('procurement')
-      .update({ contractor_id: awardContractorId, status: nextStatus })
+      .update({ contractor_id: contractorId, status: nextStatus })
       .eq('id', procurement.id)
 
     setAwarding(false)
@@ -777,7 +800,7 @@ export default function BacProcurementDetail() {
               <div className="mt-4">
                 {procurement.contractor_id && !isEditingAward ? (
                   <div className="flex flex-wrap items-center gap-3">
-                    <Field label="Winning Contractor">{procurement.contractors?.name}</Field>
+                    <Field label="Winning Bidder">{procurement.contractors?.name}</Field>
                     {canEditAward ? (
                       <Button
                         type="button"
@@ -794,27 +817,24 @@ export default function BacProcurementDetail() {
                   <div className="flex flex-wrap items-end gap-3">
                     <div className="min-w-55">
                       <label htmlFor="award_contractor" className="mb-1 block text-sm font-medium text-slate-700">
-                        Winning Contractor
+                        Winning Bidder
                       </label>
-                      <select
+                      <input
                         id="award_contractor"
-                        value={awardContractorId}
-                        onChange={(event) => setAwardContractorId(event.target.value)}
+                        placeholder="Contractor or company name"
+                        value={awardContractorName}
+                        onChange={(event) => setAwardContractorName(event.target.value)}
                         className={inputClass}
-                      >
-                        <option value="">Select contractor</option>
-                        {contractors.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </select>
+                      />
                     </div>
                     <Button
                       type="button"
                       icon={Gavel}
                       loading={awarding}
-                      disabled={!awardContractorId || awardContractorId === procurement.contractor_id}
+                      disabled={
+                        !awardContractorName.trim() ||
+                        awardContractorName.trim() === (procurement.contractors?.name ?? '')
+                      }
                       onClick={handleRecordAward}
                     >
                       Record Award
@@ -825,7 +845,7 @@ export default function BacProcurementDetail() {
                         variant="ghost"
                         size="sm"
                         onClick={() => {
-                          setAwardContractorId(procurement.contractor_id ?? '')
+                          setAwardContractorName(procurement.contractors?.name ?? '')
                           setIsEditingAward(false)
                         }}
                       >

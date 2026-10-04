@@ -13,7 +13,7 @@ import { LoadingState } from '@shared/components/ui/LoadingState'
 import EmptyState from '@shared/components/ui/EmptyState'
 import DssPanel from '../../components/ui/DssPanel'
 import LocationModal from '../../components/LocationModal'
-import ProgramOfWorksSection from '../../components/ProgramOfWorksSection'
+import ProgramOfWorksSection, { UpdatePowButton } from '../../components/ProgramOfWorksSection'
 import SitePhotoGrid from '../../components/ui/SitePhotoGrid'
 import { formatCurrency, formatDate } from '@shared/utils/format'
 import {
@@ -102,6 +102,7 @@ function MonitoringHistoryModal({ open, onClose, updates, imagesByUpdate, onComp
                   </div>
                   <p className="mt-1 text-xs text-slate-500">by {entry.reporter?.full_name ?? '—'}</p>
                   <UpdateAnalysisFlag update={entry} />
+                  <UpdatePowButton documents={entry.pow_documents} />
                   {(imagesByUpdate.get(entry.id) ?? []).length > 0 ? (
                     <Button
                       type="button"
@@ -197,6 +198,7 @@ export default function MpdcProjectMonitoringDetail() {
       .select(
         `id, progress_percentage, narrative_report, issues_encountered, weather_condition, report_date, created_at,
          ai_analysis_status, ai_analysis_result,
+         pow_documents:project_documents(id, document_category, file_name, storage_path),
          reporter:profiles!project_updates_reported_by_fkey(full_name)`,
       )
       .eq('project_id', projectId)

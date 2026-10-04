@@ -13,6 +13,52 @@ import { getDocumentViewUrl } from '@shared/utils/documentViewer'
 // document behind it. Reads project_documents under pdocs_select_staff, so
 // any staff role can open it; the POW itself is uploaded in
 // engineering/ProjectReviewDetail.jsx.
+async function openDocument(doc, toast) {
+  const { data, error } = await supabase.storage
+    .from('project-documents')
+    .createSignedUrl(doc.storage_path, 300)
+
+  if (error || !data?.signedUrl) {
+    toast.error('Could not open document', error?.message ?? 'Try again.')
+    return
+  }
+  window.open(getDocumentViewUrl(data.signedUrl, doc.file_name), '_blank', 'noopener,noreferrer')
+}
+
+// The POW submitted with one monitoring update, shown on that update's entry
+// in Monitoring History. `documents` is the update's embedded
+// project_documents rows (linked by project_update_id); renders nothing for
+// updates that predate the link.
+export function UpdatePowButton({ documents }) {
+  const toast = useToast()
+  const [openingId, setOpeningId] = useState(null)
+
+  const powDocuments = (documents ?? []).filter((doc) => doc.document_category === 'PROGRAM_OF_WORKS')
+  if (powDocuments.length === 0) return null
+
+  return (
+    <div className="mt-2 flex flex-wrap gap-2">
+      {powDocuments.map((doc) => (
+        <Button
+          key={doc.id}
+          type="button"
+          variant="secondary"
+          size="sm"
+          icon={FileText}
+          loading={openingId === doc.id}
+          onClick={async () => {
+            setOpeningId(doc.id)
+            await openDocument(doc, toast)
+            setOpeningId(null)
+          }}
+        >
+          {powDocuments.length === 1 ? 'View POW' : `View POW — ${doc.file_name}`}
+        </Button>
+      ))}
+    </div>
+  )
+}
+
 export default function ProgramOfWorksSection({ project }) {
   const toast = useToast()
   const [documents, setDocuments] = useState([])
@@ -43,16 +89,8 @@ export default function ProgramOfWorksSection({ project }) {
 
   async function handleView(doc) {
     setOpeningId(doc.id)
-    const { data, error } = await supabase.storage
-      .from('project-documents')
-      .createSignedUrl(doc.storage_path, 300)
+    await openDocument(doc, toast)
     setOpeningId(null)
-
-    if (error || !data?.signedUrl) {
-      toast.error('Could not open document', error?.message ?? 'Try again.')
-      return
-    }
-    window.open(getDocumentViewUrl(data.signedUrl, doc.file_name), '_blank', 'noopener,noreferrer')
   }
 
   const [latest, ...older] = documents

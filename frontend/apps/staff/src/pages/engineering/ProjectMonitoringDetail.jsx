@@ -13,7 +13,7 @@ import { LoadingState } from '@shared/components/ui/LoadingState'
 import EmptyState from '@shared/components/ui/EmptyState'
 import DssPanel from '../../components/ui/DssPanel'
 import LocationModal from '../../components/LocationModal'
-import ProgramOfWorksSection from '../../components/ProgramOfWorksSection'
+import ProgramOfWorksSection, { UpdatePowButton } from '../../components/ProgramOfWorksSection'
 import SitePhotoGrid from '../../components/ui/SitePhotoGrid'
 import { formatDate } from '@shared/utils/format'
 import {
@@ -271,6 +271,7 @@ function MonitoringHistoryModal({ open, onClose, updates, imagesByUpdate, onComp
                   </div>
                   <p className="mt-1 text-xs text-slate-500">by {entry.reporter?.full_name ?? '—'}</p>
                   <UpdateAnalysisFlag update={entry} />
+                  <UpdatePowButton documents={entry.pow_documents} />
                   {(imagesByUpdate.get(entry.id) ?? []).length > 0 ? (
                     <Button
                       type="button"
@@ -335,6 +336,12 @@ export default function ProjectMonitoringDetail() {
   const draftKey = `monitoring-update:${projectId}`
   const [form, setForm] = useState(() => readDraft(draftKey) ?? EMPTY_FORM)
   const [photoQueue, setPhotoQueue] = useState([])
+  // Optional revised Program of Works attached to the update. Like photos,
+  // file handles stay out of the draft.
+  const [powFiles, setPowFiles] = useState([])
+  const [powInputKey, setPowInputKey] = useState(0)
+  // Bumped after a POW upload so ProgramOfWorksSection reloads its list.
+  const [powVersion, setPowVersion] = useState(0)
   // The update form opens as a modal from the "Submit Monitoring Update" button.
   const [formOpen, setFormOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
@@ -354,6 +361,7 @@ export default function ProjectMonitoringDetail() {
       .select(
         `id, progress_percentage, narrative_report, issues_encountered, report_date, created_at,
          ai_analysis_status, ai_analysis_result,
+         pow_documents:project_documents(id, document_category, file_name, storage_path),
          reporter:profiles!project_updates_reported_by_fkey(full_name)`,
       )
       .eq('project_id', projectId)
@@ -521,9 +529,33 @@ export default function ProjectMonitoringDetail() {
       toast.error('Invalid report date', 'The report date cannot be in the future.')
       return
     }
+    if (powFiles.length === 0) {
+      toast.error('Program of Works required', 'Attach the Program of Works this update is measured against.')
+      return
+    }
 
     setSubmitting(true)
     const previousStatus = project.status
+
+    // Every update must carry its Program of Works, so the files go up to
+    // storage before the update row exists — a failed upload stops the
+    // submission instead of leaving an update without its POW. Same bucket,
+    // table and path scheme as the POW upload in ProjectReviewDetail.jsx;
+    // pdocs_insert_engineering_monitoring_pow allows it while monitoring is
+    // open.
+    const uploadedPow = []
+    for (const file of powFiles) {
+      const path = `${project.id}/${crypto.randomUUID()}-${file.name}`
+      const { error: uploadError } = await supabase.storage
+        .from('project-documents')
+        .upload(path, file, { contentType: file.type || undefined })
+      if (uploadError) {
+        toast.error('Could not upload the Program of Works', `${file.name}: ${uploadError.message}`)
+        setSubmitting(false)
+        return
+      }
+      uploadedPow.push({ file, path })
+    }
 
     const { data: newUpdate, error: updateError } = await supabase
       .from('project_updates')
@@ -595,13 +627,33 @@ export default function ProjectMonitoringDetail() {
       }
     }
 
+    const failedPow = []
+    for (const { file, path } of uploadedPow) {
+      const { error: insertError } = await supabase.from('project_documents').insert({
+        project_id: project.id,
+        project_update_id: newUpdate.id,
+        uploaded_by: user.id,
+        document_category: 'PROGRAM_OF_WORKS',
+        title: `Program of Works — ${project.project_code}`,
+        storage_path: path,
+        file_name: file.name,
+      })
+      if (insertError) failedPow.push(`${file.name}: ${insertError.message}`)
+    }
+    if (uploadedPow.length > failedPow.length) setPowVersion((current) => current + 1)
+
     setForm(EMPTY_FORM)
     setFormOpen(false)
     setPhotoQueue([])
+    setPowFiles([])
+    setPowInputKey((current) => current + 1)
     setSubmitting(false)
 
     if (failedPhotos.length > 0) {
       toast.error('Update saved, but some photos failed to upload', failedPhotos.join('; '))
+    }
+    if (failedPow.length > 0) {
+      toast.error('Update saved, but the Program of Works failed to upload', failedPow.join('; '))
     }
 
     // Fire-and-forget: compares the new photos with every earlier update's.
@@ -617,7 +669,7 @@ export default function ProjectMonitoringDetail() {
         'Monitoring update recorded',
         `Project status advanced to ${PROJECT_STATUS_LABELS[refreshed.status] ?? refreshed.status}.`,
       )
-    } else if (failedPhotos.length === 0) {
+    } else if (failedPhotos.length === 0 && failedPow.length === 0) {
       // The form only opens for an open MPDC request, so every submission
       // answers one — the notify_update_request_answered trigger notifies MPDC.
       toast.success('Monitoring update recorded', 'MPDC has been notified.')
@@ -703,7 +755,7 @@ export default function ProjectMonitoringDetail() {
       <div className="space-y-6">
         <DssPanel decision={dssDecision} />
 
-        <ProgramOfWorksSection project={project} />
+        <ProgramOfWorksSection key={powVersion} project={project} />
 
         {editable && updateRequested ? (
           <section
@@ -953,6 +1005,23 @@ export default function ProjectMonitoringDetail() {
                       </ul>
                     ) : null}
                   </div>
+
+                  <div className="mt-5 rounded-md border border-slate-200 bg-slate-50 p-4">
+                    <label htmlFor="pow_file" className="block text-sm font-medium text-slate-700">
+                      Program of Works *
+                    </label>
+                    <p className="mt-0.5 text-xs text-slate-500">
+                      Attach the Program of Works this update's progress is based on. Earlier versions stay on file.
+                    </p>
+                    <input
+                      key={powInputKey}
+                      id="pow_file"
+                      type="file"
+                      multiple
+                      onChange={(event) => setPowFiles(Array.from(event.target.files ?? []))}
+                      className="mt-2 block w-full text-sm text-slate-600 file:mr-3 file:cursor-pointer file:rounded-md file:border file:border-slate-300 file:bg-white file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-50"
+                    />
+                  </div>
                 </div>
 
                 <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 px-5 py-4">
@@ -967,7 +1036,8 @@ export default function ProjectMonitoringDetail() {
                       form.progress_percentage === '' ||
                       Number(form.progress_percentage) < 0 ||
                       Number(form.progress_percentage) > 100 ||
-                      !form.report_date
+                      !form.report_date ||
+                      powFiles.length === 0
                     }
                   >
                     Submit Update

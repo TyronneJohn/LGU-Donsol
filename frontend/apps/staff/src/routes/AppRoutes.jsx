@@ -33,8 +33,6 @@ import ProjectMonitoringDetail from '../pages/engineering/ProjectMonitoringDetai
 import BacDashboard from '../pages/bac/BacDashboard'
 import BacProcurement from '../pages/bac/BacProcurement'
 import BacProcurementDetail from '../pages/bac/BacProcurementDetail'
-import BacContractors from '../pages/bac/BacContractors'
-import BacContractorDetail from '../pages/bac/BacContractorDetail'
 
 import { ROLES } from '../utils/roles'
 
@@ -110,8 +108,6 @@ export default function AppRoutes() {
         <Route index element={<BacDashboard />} />
         <Route path="procurement" element={<BacProcurement />} />
         <Route path="procurement/:projectId" element={<BacProcurementDetail />} />
-        <Route path="contractors" element={<BacContractors />} />
-        <Route path="contractors/:contractorId" element={<BacContractorDetail />} />
         <Route path="messaging" element={<Messaging />} />
       </Route>
 
