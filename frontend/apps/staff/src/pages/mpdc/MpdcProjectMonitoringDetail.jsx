@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Clock, FileWarning, MapPin, MessageSquare, X } from 'lucide-react'
+import { Clock, FileWarning, Images, MapPin, MessageSquare, X } from 'lucide-react'
+import { UpdateAnalysisFlag, UpdateComparisonModal } from '../../components/UpdateComparison'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
 import { useAuth } from '../../hooks/useAuth'
@@ -14,6 +15,7 @@ import DssPanel from '../../components/ui/DssPanel'
 import LocationModal from '../../components/LocationModal'
 import ConfirmedBySection from '../../components/ConfirmedBySection'
 import ProjectDocumentsList from '../../components/ProjectDocumentsList'
+import ProgramOfWorksSection, { UpdatePowButton } from '../../components/ProgramOfWorksSection'
 import SitePhotoGrid from '../../components/ui/SitePhotoGrid'
 import { formatCurrency, formatDate } from '@shared/utils/format'
 import {
@@ -27,6 +29,7 @@ import {
 import { evaluateProjectDss } from '@shared/utils/decisionSupport'
 import { isWithinDonsol } from '@shared/utils/geo'
 import { ROLES, ROLE_LABELS } from '../../utils/roles'
+import { UPDATE_REQUEST_PREFIX } from '../../utils/updateRequests'
 
 function Field({ label, children }) {
   return (
@@ -41,7 +44,7 @@ function Field({ label, children }) {
 // as LocationModal — keeps the page short instead of always listing every
 // update + photo inline, mirroring the same change on Engineering's own
 // ProjectMonitoringDetail.jsx.
-function MonitoringHistoryModal({ open, onClose, updates, imagesByUpdate }) {
+function MonitoringHistoryModal({ open, onClose, updates, imagesByUpdate, onCompare }) {
   useEffect(() => {
     if (!open) return undefined
 
@@ -93,12 +96,27 @@ function MonitoringHistoryModal({ open, onClose, updates, imagesByUpdate }) {
               {updates.map((entry) => (
                 <li key={entry.id} className="rounded-md border border-slate-100 bg-slate-50 p-4">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-sm font-medium text-slate-800">
+                    <span className="flex items-center gap-2 text-sm font-medium text-slate-800">
                       {entry.progress_percentage != null ? `${entry.progress_percentage}% complete` : 'Update'}
+                      {entry.id === updates[0]?.id ? <Badge tone="blue">New</Badge> : null}
                     </span>
                     <span className="text-xs text-slate-500">{formatDate(entry.report_date)}</span>
                   </div>
                   <p className="mt-1 text-xs text-slate-500">by {entry.reporter?.full_name ?? '—'}</p>
+                  <UpdateAnalysisFlag update={entry} />
+                  <UpdatePowButton documents={entry.pow_documents} />
+                  {(imagesByUpdate.get(entry.id) ?? []).length > 0 ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      icon={Images}
+                      className="mt-2"
+                      onClick={() => onCompare(entry.id)}
+                    >
+                      Compare with previous photos
+                    </Button>
+                  ) : null}
                   {entry.weather_condition ? (
                     <p className="mt-1 text-xs text-slate-500">Weather: {entry.weather_condition}</p>
                   ) : null}
@@ -155,6 +173,7 @@ export default function MpdcProjectMonitoringDetail() {
   const [images, setImages] = useState([])
   const [locationOpen, setLocationOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [compareUpdateId, setCompareUpdateId] = useState(null)
   const [requestingUpdate, setRequestingUpdate] = useState(false)
 
   async function loadProcurement() {
@@ -179,7 +198,9 @@ export default function MpdcProjectMonitoringDetail() {
     const { data, error } = await supabase
       .from('project_updates')
       .select(
-        `id, progress_percentage, narrative_report, issues_encountered, weather_condition, report_date,
+        `id, progress_percentage, narrative_report, issues_encountered, weather_condition, report_date, created_at,
+         ai_analysis_status, ai_analysis_result,
+         pow_documents:project_documents(id, document_category, file_name, storage_path),
          reporter:profiles!project_updates_reported_by_fkey(full_name)`,
       )
       .eq('project_id', projectId)
@@ -198,7 +219,7 @@ export default function MpdcProjectMonitoringDetail() {
     const { data, error } = await supabase
       .from('project_images')
       .select(
-        `id, project_update_id, storage_path, file_name, image_stage, ai_analysis_status, ai_analysis_result, created_at,
+        `id, project_update_id, storage_path, file_name, image_stage, ai_analysis_status, ai_analysis_result, created_at, latitude, longitude,
          uploader:profiles!project_images_uploaded_by_fkey(full_name)`,
       )
       .eq('project_id', projectId)
@@ -228,7 +249,7 @@ export default function MpdcProjectMonitoringDetail() {
       .from('projects')
       .select(
         `id, project_code, title, description, project_category, barangay, location_text,
-         latitude, longitude, estimated_cost, approved_budget, funding_source,
+         latitude, longitude, estimated_cost, approved_budget, pow_amount, pow_date, funding_source,
          start_date_planned, end_date_planned, start_date_actual, end_date_actual, status,
          offices(name),
          creator:profiles!projects_created_by_fkey(full_name)`,
@@ -270,7 +291,7 @@ export default function MpdcProjectMonitoringDetail() {
     if (!project) return
     setRequestingUpdate(true)
 
-    const body = `Requesting a progress update for ${project.title} (${project.project_code}).`
+    const body = `${UPDATE_REQUEST_PREFIX}${project.title} (${project.project_code}).`
 
     const { data: inserted, error } = await supabase
       .from('messages')
@@ -439,6 +460,8 @@ export default function MpdcProjectMonitoringDetail() {
           </section>
         ) : null}
 
+        <ProgramOfWorksSection project={project} />
+
         <section className="flex items-center justify-between gap-3 rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
           <div>
             <h2 className="text-sm font-semibold text-slate-800">Monitoring History</h2>
@@ -448,9 +471,16 @@ export default function MpdcProjectMonitoringDetail() {
                 : `${updates.length} update${updates.length === 1 ? '' : 's'} reported by Engineering.`}
             </p>
           </div>
-          <Button type="button" variant="secondary" size="sm" icon={Clock} onClick={() => setHistoryOpen(true)}>
-            View History
-          </Button>
+          <div className="flex flex-wrap justify-end gap-2">
+            {updates[0] && (imagesByUpdate.get(updates[0].id) ?? []).length > 0 ? (
+              <Button type="button" variant="secondary" size="sm" icon={Images} onClick={() => setCompareUpdateId(updates[0].id)}>
+                Compare latest photos
+              </Button>
+            ) : null}
+            <Button type="button" variant="secondary" size="sm" icon={Clock} onClick={() => setHistoryOpen(true)}>
+              View History
+            </Button>
+          </div>
         </section>
 
         <ProjectDocumentsList projectId={project.id} />
@@ -465,7 +495,20 @@ export default function MpdcProjectMonitoringDetail() {
         onClose={() => setHistoryOpen(false)}
         updates={updates}
         imagesByUpdate={imagesByUpdate}
+        onCompare={setCompareUpdateId}
       />
+
+      {compareUpdateId && updates.some((entry) => entry.id === compareUpdateId) ? (
+        <UpdateComparisonModal
+          key={compareUpdateId}
+          update={updates.find((entry) => entry.id === compareUpdateId)}
+          updates={updates}
+          images={images}
+          isNew={compareUpdateId === updates[0]?.id}
+          onClose={() => setCompareUpdateId(null)}
+          onAnalyzed={loadUpdates}
+        />
+      ) : null}
     </div>
   )
 }

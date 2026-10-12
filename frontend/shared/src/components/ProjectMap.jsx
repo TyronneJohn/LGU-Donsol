@@ -170,7 +170,7 @@ function ClearSelectionOnMapClick({ onClear }) {
 // Donsol. Pinned to a corner of the map box instead, it's fully visible at
 // every zoom and pan position. Bottom sheet on phones, fixed-width card
 // from `sm` up; scrolls internally if taller than the map.
-function ProjectDetailsCard({ project, onClose }) {
+function ProjectDetailsCard({ project, onClose, footer }) {
   return (
     <section
       aria-label="Project details"
@@ -220,6 +220,7 @@ function ProjectDetailsCard({ project, onClose }) {
           </div>
         ) : null}
       </div>
+      {footer ? <div className="mt-2.5 border-t border-slate-100 pt-2.5">{footer}</div> : null}
     </section>
   )
 }
@@ -295,8 +296,11 @@ class MapErrorBoundary extends Component {
  *   Optional decorator fields the details card renders when present:
  *   `procurement_status`, `progress_percentage`, `flags`.
  * @param {string} [height]
+ * @param {(project: object) => import('react').ReactNode} [renderCardFooter] -
+ *   optional extra content at the bottom of a clicked pin's details card
+ *   (the public site puts its "View Project Photos" button here).
  */
-export default function ProjectMap({ projects, height = '520px' }) {
+export default function ProjectMap({ projects, height = '520px', renderCardFooter }) {
   const points = useMemo(() => projects.map((p) => [Number(p.latitude), Number(p.longitude)]), [projects])
   // Closed until a pin is clicked. Looked up by id so a stale selection from
   // a previously shown project simply resolves to nothing.
@@ -407,7 +411,11 @@ export default function ProjectMap({ projects, height = '520px' }) {
         {/* Sibling of MapContainer, not a child: keeps the card's own
             clicks/scrolls from ever reaching Leaflet as map pans or zooms. */}
         {selectedProject ? (
-          <ProjectDetailsCard project={selectedProject} onClose={() => setSelectedId(null)} />
+          <ProjectDetailsCard
+            project={selectedProject}
+            onClose={() => setSelectedId(null)}
+            footer={renderCardFooter?.(selectedProject)}
+          />
         ) : null}
       </div>
     </MapErrorBoundary>
