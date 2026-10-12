@@ -4,6 +4,8 @@ import { ArrowRight, FolderKanban, X } from 'lucide-react'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
 import PageHeader from '../../components/ui/PageHeader'
+import Pagination from '../../components/ui/Pagination'
+import { usePagination } from '../../hooks/usePagination'
 import Button from '../../components/ui/Button'
 import Badge from '@shared/components/ui/Badge'
 import { LoadingState } from '@shared/components/ui/LoadingState'
@@ -42,7 +44,7 @@ export default function AdminProjects() {
          offices(name),
          creator:profiles!projects_created_by_fkey(full_name)`,
       )
-      .order('created_at', { ascending: false })
+      .order('updated_at', { ascending: false })
 
     if (officeFilter) query = query.eq('office_id', officeFilter)
     if (statusFilter) query = query.eq('status', statusFilter)
@@ -81,6 +83,8 @@ export default function AdminProjects() {
     next.delete('dss')
     setSearchParams(next)
   }
+
+  const pagination = usePagination(projects, [officeFilter, statusFilter, dssFilter])
 
   return (
     <div>
@@ -160,7 +164,7 @@ export default function AdminProjects() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {projects.map((project) => (
+              {pagination.pageItems.map((project) => (
                 <tr key={project.id}>
                   <td className="px-4 py-2.5 text-slate-800">{project.project_code ?? '—'}</td>
                   <td className="px-4 py-2.5 text-slate-800">{project.title}</td>
@@ -187,6 +191,8 @@ export default function AdminProjects() {
           </div>
         </>
       )}
+
+      {!loading ? <Pagination {...pagination} /> : null}
     </div>
   )
 }

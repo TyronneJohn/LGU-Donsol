@@ -6,16 +6,22 @@ import { useToast } from '../../hooks/useToast'
 import { useConfirm } from '../../hooks/useConfirm'
 import { useAuth } from '../../hooks/useAuth'
 import { useFormDraft, readDraft, clearDraft } from '../../hooks/useFormDraft'
+import { useFieldErrors } from '../../hooks/useFieldErrors'
+import { useConfirmedBy } from '../../hooks/useConfirmedBy'
 import PageHeader from '../../components/ui/PageHeader'
 import Button from '../../components/ui/Button'
 import CurrencyInput from '../../components/ui/CurrencyInput'
+import FieldError from '../../components/ui/FieldError'
+import { invalidClass, invalidFileClass } from '../../utils/fieldStyles'
 import Badge from '@shared/components/ui/Badge'
 import { LoadingState } from '@shared/components/ui/LoadingState'
 import EmptyState from '@shared/components/ui/EmptyState'
 import LocationModal from '../../components/LocationModal'
+import ConfirmedBySection from '../../components/ConfirmedBySection'
 import { formatCurrency, formatDate, formatDateTime } from '@shared/utils/format'
 import { PROJECT_STATUS_LABELS, PROJECT_STATUS_TONES } from '@shared/utils/projectStatus'
 import { getDocumentViewUrl } from '@shared/utils/documentViewer'
+import { DOCUMENT_ACCEPT, DOCUMENT_RULES_TEXT, pickDocuments } from '../../utils/documentUpload'
 import { isWithinDonsol } from '@shared/utils/geo'
 
 const inputClass =
@@ -40,7 +46,7 @@ const DECISION_CONFIG = {
     variant: 'secondary',
     icon: RotateCcw,
     remarksRequired: true,
-    remarksLabel: 'Technical findings / reason for return (required)',
+    remarksLabel: 'Technical findings / reason for return *',
     confirmTitle: 'Return this project for revision?',
     confirmDescription: 'MPDC will be notified and will decide whether to revise and resubmit or reject the project.',
     confirmTone: 'default',
@@ -78,13 +84,16 @@ export default function ProjectReviewDetail() {
 
   const [powForm, setPowForm] = useState({ pow_amount: '', pow_date: '' })
   const [powFiles, setPowFiles] = useState([])
-  const [powFileKey, setPowFileKey] = useState(0)
   const [savingPow, setSavingPow] = useState(false)
-  const [editingPow, setEditingPow] = useState(false)
 
   const [docForm, setDocForm] = useState({ title: '', files: [] })
   const [docInputKey, setDocInputKey] = useState(0)
   const [uploading, setUploading] = useState(false)
+
+  const powErrors = useFieldErrors()
+  const docErrors = useFieldErrors()
+  const confirmedBy = useConfirmedBy()
+  const decisionErrors = useFieldErrors()
 
   // Unsaved review input survives a refresh or anything that unmounts this
   // page. The POW fields are drafted against the project's saved values; the
@@ -209,17 +218,16 @@ export default function ProjectReviewDetail() {
     }
 
     setProject(projectResult.data)
-    // A restored draft means an edit was in progress, so reopen the fields
-    // for editing too — otherwise the recovered values would sit behind a
-    // read-only panel with no sign they're there.
-    const powDraft = readDraft(`project-review-pow:${projectId}`)
+    // A submitted POW is final, so a leftover draft only matters before the
+    // first submission.
+    const powDraft =
+      projectResult.data.pow_amount == null ? readDraft(`project-review-pow:${projectId}`) : null
     setPowForm(
       powDraft ?? {
         pow_amount: projectResult.data.pow_amount ?? '',
         pow_date: projectResult.data.pow_date ?? '',
       },
     )
-    if (powDraft) setEditingPow(true)
 
     if (submissionResult.error) {
       toast.error('Could not load submission details', submissionResult.error.message)
@@ -236,12 +244,14 @@ export default function ProjectReviewDetail() {
   }, [projectId])
 
   function startDecision(type) {
+    decisionErrors.clearErrors()
     setActionType(type)
     setRemarks(readDraft(`project-review-remarks:${projectId}:${type}`) ?? '')
   }
 
   function cancelDecision() {
     clearDraft(remarksDraftKey)
+    decisionErrors.clearErrors()
     setActionType(null)
     setRemarks('')
   }
@@ -265,14 +275,18 @@ export default function ProjectReviewDetail() {
     const config = DECISION_CONFIG[actionType]
     const trimmedRemarks = remarks.trim()
 
-    if (config.remarksRequired && !trimmedRemarks) {
-      toast.error('Remarks required', `Please provide ${config.remarksLabel.toLowerCase()}.`)
+    if (
+      !decisionErrors.validate({
+        remarks: config.remarksRequired && !trimmedRemarks && 'Enter your technical findings before returning the project.',
+      })
+    ) {
       return
     }
     if (!submission) {
       toast.error('Cannot record decision', 'No submission record was found for this project.')
       return
     }
+    if (!confirmedBy.require()) return
 
     const confirmed = await confirm({
       title: config.confirmTitle,
@@ -299,6 +313,7 @@ export default function ProjectReviewDetail() {
     }
 
     await sendDecisionNotification(trimmedRemarks)
+    await confirmedBy.record(project.id, 'Returned the project for revision')
 
     clearDraft(remarksDraftKey)
     setSubmitting(false)
@@ -334,17 +349,21 @@ export default function ProjectReviewDetail() {
   async function handleSavePow(event) {
     event.preventDefault()
 
+    // A Program of Works is final once sent — it can't be edited afterwards
+    // (also enforced by the lock_program_of_works trigger).
+    if (project.pow_amount != null) return
+
     const powAmount = powForm.pow_amount === '' ? null : Number(powForm.pow_amount)
-    if (powAmount == null || powAmount <= 0) {
-      toast.error('POW amount required', 'Enter the total cost in the Program of Works.')
+    if (
+      !powErrors.validate({
+        pow_amount: (powAmount == null || powAmount <= 0) && 'Enter the total cost in the Program of Works.',
+        pow_date: !powForm.pow_date && 'Choose the date of the Program of Works.',
+        pow_file: powFiles.length === 0 && 'Attach the Program of Works document.',
+      })
+    ) {
       return
     }
-    // The file is required on the first submission only — a later correction
-    // to the amount shouldn't force re-uploading a POW that's already on file.
-    if (powFiles.length === 0 && project.pow_amount == null) {
-      toast.error('POW file required', 'Attach the Program of Works document.')
-      return
-    }
+    if (!confirmedBy.require()) return
 
     setSavingPow(true)
 
@@ -368,7 +387,7 @@ export default function ProjectReviewDetail() {
       .from('projects')
       .update({
         pow_amount: powAmount,
-        pow_date: powForm.pow_date || null,
+        pow_date: powForm.pow_date,
         pow_submitted_at: new Date().toISOString(),
         pow_submitted_by: user.id,
       })
@@ -398,36 +417,27 @@ export default function ProjectReviewDetail() {
     })
     if (notifyError) toast.error('Saved, but could not notify MPDC', notifyError.message)
 
+    await confirmedBy.record(project.id, 'Submitted the Program of Works')
     clearDraft(powDraftKey)
     toast.success('Program of Works submitted')
     navigate('/engineering/review')
   }
 
-  function handleCancelEditPow() {
-    clearDraft(powDraftKey)
-    setPowForm({
-      pow_amount: project.pow_amount ?? '',
-      pow_date: project.pow_date ?? '',
-    })
-    setPowFiles([])
-    setPowFileKey((current) => current + 1)
-    setEditingPow(false)
-  }
-
   async function handleUploadDocument(event) {
     event.preventDefault()
-    if (docForm.files.length === 0) {
-      toast.error('Choose a file', 'Select at least one file to upload.')
-      return
-    }
     // The Title field only applies when uploading a single file — with
     // several selected at once, each document takes its own file name
     // instead, so there's nothing to require in that case.
-    const useTitle = docForm.files.length === 1
-    if (useTitle && !docForm.title.trim()) {
-      toast.error('Title required', 'Enter a title for this document.')
+    const useTitle = docForm.files.length <= 1
+    if (
+      !docErrors.validate({
+        doc_title: useTitle && !docForm.title.trim() && 'Enter a title for this document.',
+        doc_file: docForm.files.length === 0 && 'Select at least one file to upload.',
+      })
+    ) {
       return
     }
+    if (!confirmedBy.require()) return
 
     setUploading(true)
 
@@ -448,6 +458,10 @@ export default function ProjectReviewDetail() {
       )
     }
     if (succeededCount > 0) {
+      await confirmedBy.record(
+        project.id,
+        succeededCount === 1 ? 'Uploaded a technical document' : `Uploaded ${succeededCount} technical documents`,
+      )
       toast.success(succeededCount === 1 ? 'Document uploaded' : `${succeededCount} documents uploaded`)
     }
 
@@ -500,7 +514,7 @@ export default function ProjectReviewDetail() {
     <div>
       <PageHeader
         title={project.title}
-        description={project.project_code}
+        description={project.project_code ? `Project Code: ${project.project_code}` : undefined}
         breadcrumbs={[
           { label: 'Dashboard', to: '/engineering' },
           { label: 'Project Review', to: '/engineering/review' },
@@ -585,14 +599,10 @@ export default function ProjectReviewDetail() {
               <h2 className="text-sm font-semibold text-slate-800">Program of Works</h2>
               <p className="mt-0.5 text-xs text-slate-400">
                 Engineering's deliverable for this review. The total here becomes the ABC when BAC starts
-                procurement, and MPDC cannot endorse the project to BAC until it is on file.
+                procurement, and MPDC cannot endorse the project to BAC until it is on file. Once sent,
+                it is final and can no longer be edited.
               </p>
             </div>
-            {canReview && project.pow_amount != null && !editingPow ? (
-              <Button type="button" variant="secondary" size="sm" onClick={() => setEditingPow(true)}>
-                Edit
-              </Button>
-            ) : null}
           </div>
 
           {project.pow_submitted_at ? (
@@ -602,7 +612,7 @@ export default function ProjectReviewDetail() {
           ) : null}
 
           <fieldset
-            disabled={!canReview || (project.pow_amount != null && !editingPow)}
+            disabled={!canReview || project.pow_amount != null}
             className="mt-4 grid gap-4 sm:grid-cols-2"
           >
             <div>
@@ -612,35 +622,54 @@ export default function ProjectReviewDetail() {
               <CurrencyInput
                 id="pow_amount"
                 value={powForm.pow_amount}
-                onChange={(value) => setPowForm((current) => ({ ...current, pow_amount: value }))}
-                className={inputClass}
+                onChange={(value) => {
+                  setPowForm((current) => ({ ...current, pow_amount: value }))
+                  powErrors.clearError('pow_amount')
+                }}
+                className={inputClass + invalidClass(powErrors.errors.pow_amount)}
               />
+              <FieldError message={powErrors.errors.pow_amount} />
             </div>
             <div>
               <label htmlFor="pow_date" className="mb-1 block text-sm font-medium text-slate-700">
-                POW Date
+                POW Date *
               </label>
               <input
                 id="pow_date"
                 type="date"
                 value={powForm.pow_date}
-                onChange={(event) => setPowForm((current) => ({ ...current, pow_date: event.target.value }))}
-                className={inputClass}
+                onChange={(event) => {
+                  setPowForm((current) => ({ ...current, pow_date: event.target.value }))
+                  powErrors.clearError('pow_date')
+                }}
+                className={inputClass + invalidClass(powErrors.errors.pow_date)}
               />
+              <FieldError message={powErrors.errors.pow_date} />
             </div>
-            <div className="sm:col-span-2">
-              <label htmlFor="pow_file" className="mb-1 block text-sm font-medium text-slate-700">
-                POW Document {project.pow_amount == null ? '*' : '(optional — replaces nothing on file)'}
-              </label>
-              <input
-                key={powFileKey}
-                id="pow_file"
-                type="file"
-                multiple
-                onChange={(event) => setPowFiles(Array.from(event.target.files ?? []))}
-                className="block w-full text-sm text-slate-600 file:mr-3 file:cursor-pointer file:rounded-md file:border file:border-slate-300 file:bg-white file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-50"
-              />
-            </div>
+            {project.pow_amount == null ? (
+              <div className="sm:col-span-2">
+                <label htmlFor="pow_file" className="mb-1 block text-sm font-medium text-slate-700">
+                  POW Document *
+                </label>
+                <input
+                  id="pow_file"
+                  type="file"
+                  multiple
+                  accept={DOCUMENT_ACCEPT}
+                  onChange={(event) => {
+                    setPowFiles(pickDocuments(event, toast))
+                    powErrors.clearError('pow_file')
+                  }}
+                  className={`block w-full text-sm text-slate-600 file:mr-3 file:cursor-pointer file:rounded-md file:border file:border-slate-300 file:bg-white file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-50${invalidFileClass(powErrors.errors.pow_file)}`}
+                />
+                <FieldError message={powErrors.errors.pow_file} />
+                <p className="mt-1 text-xs text-slate-400">{DOCUMENT_RULES_TEXT}</p>
+              </div>
+            ) : (
+              <p className="text-xs text-slate-500 sm:col-span-2">
+                The POW file is listed under Technical Documents below.
+              </p>
+            )}
           </fieldset>
 
           {powOverBudget ? (
@@ -651,22 +680,16 @@ export default function ProjectReviewDetail() {
             </p>
           ) : null}
 
-          {canReview && (project.pow_amount == null || editingPow) ? (
+          {canReview && project.pow_amount == null ? (
             <div className="mt-4 flex gap-2">
               <Button
                 type="submit"
                 size="sm"
                 icon={Save}
                 loading={savingPow}
-                disabled={!powForm.pow_amount || Number(powForm.pow_amount) <= 0}
               >
                 Send to MPDC
               </Button>
-              {editingPow ? (
-                <Button type="button" variant="secondary" size="sm" onClick={handleCancelEditPow}>
-                  Cancel
-                </Button>
-              ) : null}
             </div>
           ) : null}
         </form>
@@ -703,15 +726,18 @@ export default function ProjectReviewDetail() {
               {docForm.files.length <= 1 ? (
                 <div>
                   <label htmlFor="doc_title" className="mb-1 block text-sm font-medium text-slate-700">
-                    Title
+                    Title *
                   </label>
                   <input
                     id="doc_title"
                     value={docForm.title}
-                    onChange={(event) => setDocForm((current) => ({ ...current, title: event.target.value }))}
-                    className={inputClass}
-                    required
+                    onChange={(event) => {
+                      setDocForm((current) => ({ ...current, title: event.target.value }))
+                      docErrors.clearError('doc_title')
+                    }}
+                    className={inputClass + invalidClass(docErrors.errors.doc_title)}
                   />
+                  <FieldError message={docErrors.errors.doc_title} />
                 </div>
               ) : (
                 <div className="flex items-end">
@@ -723,18 +749,24 @@ export default function ProjectReviewDetail() {
 
               <div>
                 <label htmlFor="doc_file" className="mb-1 block text-sm font-medium text-slate-700">
-                  File(s)
+                  File(s) *
                 </label>
                 <input
                   key={docInputKey}
                   id="doc_file"
                   type="file"
                   multiple
-                  onChange={(event) =>
-                    setDocForm((current) => ({ ...current, files: Array.from(event.target.files ?? []) }))
-                  }
-                  className="block w-full text-sm text-slate-600 file:mr-3 file:cursor-pointer file:rounded-md file:border file:border-slate-300 file:bg-white file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-50"
+                  accept={DOCUMENT_ACCEPT}
+                  onChange={(event) => {
+                    const files = pickDocuments(event, toast)
+                    setDocForm((current) => ({ ...current, files }))
+                    docErrors.clearError('doc_file')
+                    if (files.length > 1) docErrors.clearError('doc_title')
+                  }}
+                  className={`block w-full text-sm text-slate-600 file:mr-3 file:cursor-pointer file:rounded-md file:border file:border-slate-300 file:bg-white file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-50${invalidFileClass(docErrors.errors.doc_file)}`}
                 />
+                <FieldError message={docErrors.errors.doc_file} />
+                <p className="mt-1 text-xs text-slate-400">{DOCUMENT_RULES_TEXT}</p>
               </div>
 
               <div className="sm:col-span-2">
@@ -803,9 +835,13 @@ export default function ProjectReviewDetail() {
                     id="remarks"
                     rows={3}
                     value={remarks}
-                    onChange={(event) => setRemarks(event.target.value)}
-                    className={textareaClass}
+                    onChange={(event) => {
+                      setRemarks(event.target.value)
+                      decisionErrors.clearError('remarks')
+                    }}
+                    className={textareaClass + invalidClass(decisionErrors.errors.remarks)}
                   />
+                  <FieldError message={decisionErrors.errors.remarks} />
                   <div className="mt-3 flex justify-end gap-2">
                     <Button variant="secondary" size="sm" onClick={cancelDecision} disabled={submitting}>
                       Cancel
@@ -824,6 +860,12 @@ export default function ProjectReviewDetail() {
             </>
           )}
         </section>
+
+        <ConfirmedBySection
+          projectId={project.id}
+          confirmedBy={canReview ? confirmedBy : null}
+          refreshKey={confirmedBy.refreshKey}
+        />
       </div>
 
       <LocationModal open={locationOpen} project={project} onClose={() => setLocationOpen(false)} />

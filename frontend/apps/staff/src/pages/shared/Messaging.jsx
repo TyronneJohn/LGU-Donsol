@@ -1,13 +1,15 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { ArrowLeft, ExternalLink, FileText, FolderKanban, Paperclip, Search, Send, Upload, X } from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronUp, ExternalLink, FileText, FolderKanban, Paperclip, Search, Send, Upload, X } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useAuth } from '../../hooks/useAuth'
 import { useToast } from '../../hooks/useToast'
 import { useDismissablePopover } from '../../hooks/useDismissablePopover'
 import { useFormDraft, readDraft } from '../../hooks/useFormDraft'
+import { useOnlineRoles } from '../../hooks/useOnlineRoles'
 import PageHeader from '../../components/ui/PageHeader'
+import OnlineDot from '../../components/ui/OnlineDot'
 import Button from '../../components/ui/Button'
 import Badge from '@shared/components/ui/Badge'
 import { LoadingState, Spinner } from '@shared/components/ui/LoadingState'
@@ -88,6 +90,7 @@ export default function Messaging() {
   const [searchParams, setSearchParams] = useSearchParams()
 
   const otherRoles = useMemo(() => Object.values(ROLES).filter((value) => value !== role), [role])
+  const onlineRoles = useOnlineRoles()
 
   const [messages, setMessages] = useState([])
   const [loading, setLoading] = useState(true)
@@ -372,12 +375,14 @@ export default function Messaging() {
             selectedRole={selectedRole}
             onSelect={selectRole}
             myUserId={user.id}
+            onlineRoles={onlineRoles}
             className={selectedRole ? 'hidden lg:flex' : 'flex'}
           />
 
           <Thread
             role={role}
             selectedRole={selectedRole}
+            isOnline={onlineRoles.has(selectedRole)}
             bucket={activeBucket}
             draft={draft}
             onDraftChange={setDraft}
@@ -415,7 +420,37 @@ export default function Messaging() {
   )
 }
 
-function ConversationList({ buckets, selectedRole, onSelect, myUserId, className }) {
+// Wraps every case-insensitive occurrence of `term` in a <mark>.
+function HighlightedText({ text, term }) {
+  if (!term || !text) return text ?? null
+  const lower = text.toLowerCase()
+  const parts = []
+  let from = 0
+  let at = lower.indexOf(term)
+  while (at !== -1) {
+    if (at > from) parts.push(text.slice(from, at))
+    parts.push(
+      <mark key={at} className="rounded-sm bg-amber-300 px-0.5 text-slate-900">
+        {text.slice(at, at + term.length)}
+      </mark>,
+    )
+    from = at + term.length
+    at = lower.indexOf(term, from)
+  }
+  if (from < text.length) parts.push(text.slice(from))
+  return parts
+}
+
+// Text the in-conversation search looks through for one message: its body,
+// the attached file's name, and the attached project's title/code.
+function messageSearchText(message) {
+  return [message.body, message.attachment_name, message.project?.title, message.project?.project_code]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+}
+
+function ConversationList({ buckets, selectedRole, onSelect, myUserId, onlineRoles, className }) {
   return (
     <div className={`${className} h-[70vh] flex-col overflow-hidden rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60`}>
       <div className="border-b border-slate-200 px-4 py-3">
@@ -434,8 +469,9 @@ function ConversationList({ buckets, selectedRole, onSelect, myUserId, className
                   isActive ? 'bg-blue-50' : ''
                 }`}
               >
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-blue-600 to-blue-800 text-xs font-semibold text-white">
+                <span className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-blue-600 to-blue-800 text-xs font-semibold text-white">
                   {ROLE_LABELS[bucket.role]?.charAt(0)}
+                  <OnlineDot online={onlineRoles.has(bucket.role)} />
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center justify-between gap-2">
@@ -469,6 +505,7 @@ function ConversationList({ buckets, selectedRole, onSelect, myUserId, className
 function Thread({
   role,
   selectedRole,
+  isOnline,
   bucket,
   draft,
   onDraftChange,
@@ -489,6 +526,55 @@ function Thread({
 }) {
   const fileInputRef = useRef(null)
   const [viewingImage, setViewingImage] = useState(null)
+
+  // Search inside this conversation (like Messenger's "Search in
+  // conversation"): matching messages are highlighted, and ↑/↓ step through
+  // them, starting from the newest.
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchText, setSearchText] = useState('')
+  const [activeMatch, setActiveMatch] = useState(0)
+  const searchInputRef = useRef(null)
+  const messageRefs = useRef(new Map())
+  const searchTerm = searchText.trim().toLowerCase()
+  const matchIds = useMemo(
+    () =>
+      searchTerm
+        ? (bucket?.items ?? []).filter((message) => messageSearchText(message).includes(searchTerm)).map((m) => m.id)
+        : [],
+    [bucket, searchTerm],
+  )
+  const activeMatchId = matchIds[activeMatch] ?? null
+
+  // A different conversation starts with the search closed.
+  useEffect(() => {
+    setSearchOpen(false)
+    setSearchText('')
+  }, [selectedRole])
+
+  // New search text jumps to the newest match.
+  useEffect(() => {
+    setActiveMatch(Math.max(matchIds.length - 1, 0))
+  }, [searchTerm])
+
+  useEffect(() => {
+    if (activeMatchId) messageRefs.current.get(activeMatchId)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  }, [activeMatchId])
+
+  function openSearch() {
+    setSearchOpen(true)
+    setTimeout(() => searchInputRef.current?.focus(), 0)
+  }
+
+  function closeSearch() {
+    setSearchOpen(false)
+    setSearchText('')
+  }
+
+  // ↑ = older match, ↓ = newer match, wrapping around at either end.
+  function stepMatch(direction) {
+    if (matchIds.length === 0) return
+    setActiveMatch((current) => (current + direction + matchIds.length) % matchIds.length)
+  }
 
   if (!selectedRole) {
     return (
@@ -512,11 +598,83 @@ function Thread({
         >
           <ArrowLeft className="h-4 w-4" aria-hidden="true" />
         </button>
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-blue-600 to-blue-800 text-xs font-semibold text-white">
+        <span className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-blue-600 to-blue-800 text-xs font-semibold text-white">
           {ROLE_LABELS[selectedRole]?.charAt(0)}
+          <OnlineDot online={isOnline} size="sm" />
         </span>
-        <p className="text-sm font-semibold text-slate-800">{ROLE_LABELS[selectedRole]}</p>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-slate-800">{ROLE_LABELS[selectedRole]}</p>
+          <p className="text-xs text-slate-500">{isOnline ? 'Active now' : 'Offline'}</p>
+        </div>
+        <button
+          type="button"
+          onClick={searchOpen ? closeSearch : openSearch}
+          aria-label="Search in conversation"
+          title="Search in conversation"
+          className={`rounded-full p-2 transition-colors hover:bg-slate-100 ${searchOpen ? 'bg-slate-100 text-blue-600' : 'text-slate-500'}`}
+        >
+          <Search className="h-4 w-4" aria-hidden="true" />
+        </button>
       </div>
+
+      {searchOpen ? (
+        <div className="flex items-center gap-2 border-b border-slate-200 px-4 py-2">
+          <div className="relative flex-1">
+            <Search
+              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+              aria-hidden="true"
+            />
+            <input
+              ref={searchInputRef}
+              type="text"
+              value={searchText}
+              onChange={(event) => setSearchText(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  stepMatch(event.shiftKey ? 1 : -1)
+                } else if (event.key === 'Escape') {
+                  closeSearch()
+                }
+              }}
+              placeholder="Search in conversation"
+              aria-label="Search in conversation"
+              className="w-full rounded-full border border-slate-300 bg-slate-50 py-1.5 pl-9 pr-3 text-sm focus:border-blue-600 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-600"
+            />
+          </div>
+          {searchTerm ? (
+            <span className="shrink-0 text-xs text-slate-500" aria-live="polite">
+              {matchIds.length === 0 ? 'No results' : `${activeMatch + 1} of ${matchIds.length}`}
+            </span>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => stepMatch(-1)}
+            disabled={matchIds.length === 0}
+            aria-label="Older match"
+            className="rounded-md p-1 text-slate-500 hover:bg-slate-100 disabled:opacity-40"
+          >
+            <ChevronUp className="h-4 w-4" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            onClick={() => stepMatch(1)}
+            disabled={matchIds.length === 0}
+            aria-label="Newer match"
+            className="rounded-md p-1 text-slate-500 hover:bg-slate-100 disabled:opacity-40"
+          >
+            <ChevronDown className="h-4 w-4" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            onClick={closeSearch}
+            aria-label="Close search"
+            className="rounded-md p-1 text-slate-500 hover:bg-slate-100"
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
+      ) : null}
 
       <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
         {bucket?.items.length ? (
@@ -538,7 +696,13 @@ function Thread({
                   <span className="h-px flex-1 bg-slate-200" />
                 </div>
               ) : null}
-              <div className={`flex flex-col ${isMine ? 'items-end' : 'items-start'}`}>
+              <div
+                ref={(node) => {
+                  if (node) messageRefs.current.set(message.id, node)
+                  else messageRefs.current.delete(message.id)
+                }}
+                className={`flex flex-col ${isMine ? 'items-end' : 'items-start'}`}
+              >
                 <p className="mb-1 px-1 text-xs font-medium text-slate-500">
                   {senderDisplayName(message)}
                 </p>
@@ -551,9 +715,15 @@ function Thread({
                     />
                   ) : null}
                   {hasBubble ? (
-                    <div className={`rounded-2xl px-3.5 py-2.5 shadow-sm ${isMine ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-800'}`}>
+                    <div
+                      className={`rounded-2xl px-3.5 py-2.5 shadow-sm ${isMine ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-800'} ${
+                        message.id === activeMatchId ? 'ring-2 ring-amber-400 ring-offset-2' : ''
+                      }`}
+                    >
                       {message.body ? (
-                        <p className="whitespace-pre-wrap break-words text-sm">{message.body}</p>
+                        <p className="whitespace-pre-wrap break-words text-sm">
+                          <HighlightedText text={message.body} term={searchTerm} />
+                        </p>
                       ) : null}
                       {hasFile ? (
                         <button
@@ -565,7 +735,9 @@ function Thread({
                           }`}
                         >
                           <FileText className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                          <span className="min-w-0 flex-1 truncate">{message.attachment_name}</span>
+                          <span className="min-w-0 flex-1 truncate">
+                            <HighlightedText text={message.attachment_name} term={searchTerm} />
+                          </span>
                           <span className={`shrink-0 text-[10px] ${isMine ? 'text-blue-100' : 'text-slate-400'}`}>
                             {formatFileSize(message.attachment_size)}
                           </span>
@@ -581,7 +753,10 @@ function Thread({
                         >
                           <FolderKanban className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                           <span className="truncate">
-                            {message.project.project_code} — {message.project.title}
+                            <HighlightedText
+                              text={`${message.project.project_code} — ${message.project.title}`}
+                              term={searchTerm}
+                            />
                           </span>
                         </button>
                       ) : null}

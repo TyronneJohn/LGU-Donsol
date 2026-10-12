@@ -8,9 +8,13 @@ import { useConfirm } from '../../hooks/useConfirm'
 import { useAuth } from '../../hooks/useAuth'
 import { useDismissablePopover } from '../../hooks/useDismissablePopover'
 import { useFormDraft, readDraft, clearDraft, isSameDraft } from '../../hooks/useFormDraft'
+import { useFieldErrors } from '../../hooks/useFieldErrors'
+import { useConfirmedBy } from '../../hooks/useConfirmedBy'
 import PageHeader from '../../components/ui/PageHeader'
 import Button from '../../components/ui/Button'
 import CurrencyInput from '../../components/ui/CurrencyInput'
+import FieldError from '../../components/ui/FieldError'
+import { invalidClass } from '../../utils/fieldStyles'
 import Badge from '@shared/components/ui/Badge'
 import { LoadingState } from '@shared/components/ui/LoadingState'
 import EmptyState from '@shared/components/ui/EmptyState'
@@ -19,6 +23,8 @@ import { PROJECT_STATUS_LABELS, PROJECT_STATUS_TONES, SECTOR_LABELS } from '@sha
 import { DONSOL_BARANGAYS } from '@shared/utils/barangays'
 import { DONSOL_BARANGAY_CENTROIDS } from '@shared/utils/barangayCentroids'
 import LocationModal from '../../components/LocationModal'
+import ConfirmedBySection from '../../components/ConfirmedBySection'
+import ProjectDocumentsList from '../../components/ProjectDocumentsList'
 
 const inputClass =
   'w-full rounded-md border border-slate-400 dark:border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500'
@@ -95,6 +101,11 @@ export default function ProjectForm() {
   const [rejectRemarks, setRejectRemarks] = useState('')
   const [rejecting, setRejecting] = useState(false)
   const [locationOpen, setLocationOpen] = useState(false)
+
+  const formErrors = useFieldErrors()
+  const rejectErrors = useFieldErrors()
+  const confirmedBy = useConfirmedBy()
+  const { errors } = formErrors
 
   const barangayPopover = useDismissablePopover()
   const barangayTriggerRef = useRef(null)
@@ -273,6 +284,7 @@ export default function ProjectForm() {
   // Cancel: throw the unsaved input away and go back to the clean form.
   function discardDraft() {
     clearDraft(draftKey)
+    formErrors.clearErrors()
     setForm(cleanFormRef.current)
   }
 
@@ -291,6 +303,8 @@ export default function ProjectForm() {
 
   function updateField(field, value) {
     setForm((current) => ({ ...current, [field]: value }))
+    formErrors.clearError(field)
+    if (field === 'start_date_planned') formErrors.clearError('end_date_planned')
   }
 
   // The only way latitude/longitude ever get set — always derived from the
@@ -306,24 +320,44 @@ export default function ProjectForm() {
       latitude: centroid?.lat ?? '',
       longitude: centroid?.lng ?? '',
     }))
+    formErrors.clearError('barangay')
   }
 
-  function getMissingFields() {
-    const missing = []
-    if (!form.title.trim()) missing.push(REQUIRED_FIELD_LABELS.title)
-    if (!form.description.trim()) missing.push(REQUIRED_FIELD_LABELS.description)
-    if (!form.project_category.trim()) missing.push(REQUIRED_FIELD_LABELS.project_category)
-    if (!form.sector) missing.push(REQUIRED_FIELD_LABELS.sector)
-    if (!form.barangay.trim()) missing.push(REQUIRED_FIELD_LABELS.barangay)
-    if (!form.location_text.trim()) missing.push(REQUIRED_FIELD_LABELS.location_text)
-    if (form.approved_budget === '' || Number(form.approved_budget) <= 0) {
-      missing.push(REQUIRED_FIELD_LABELS.approved_budget)
+  // Every starred field, keyed by its input's id so the form can outline and
+  // scroll to whichever one is still empty. Used by both Save and Submit for
+  // Review — nothing with a blank required field gets saved.
+  function validateRequiredFields() {
+    const required = (label) => `${label} is required.`
+    const endBeforeStart =
+      form.start_date_planned && form.end_date_planned && form.end_date_planned < form.start_date_planned
+    const valid = formErrors.validate({
+      title: !form.title.trim() && required(REQUIRED_FIELD_LABELS.title),
+      description: !form.description.trim() && required(REQUIRED_FIELD_LABELS.description),
+      project_category: !form.project_category.trim() && required(REQUIRED_FIELD_LABELS.project_category),
+      sector: !form.sector && required(REQUIRED_FIELD_LABELS.sector),
+      barangay: !form.barangay.trim() && required(REQUIRED_FIELD_LABELS.barangay),
+      location_text: !form.location_text.trim() && required(REQUIRED_FIELD_LABELS.location_text),
+      approved_budget:
+        (form.approved_budget === '' || Number(form.approved_budget) <= 0) &&
+        'Enter an approved budget greater than zero.',
+      funding_source: !form.funding_source.trim() && required(REQUIRED_FIELD_LABELS.funding_source),
+      start_date_planned: !form.start_date_planned && required(REQUIRED_FIELD_LABELS.start_date_planned),
+      end_date_planned: !form.end_date_planned
+        ? required(REQUIRED_FIELD_LABELS.end_date_planned)
+        : endBeforeStart && 'Target completion date cannot be before the proposed start date.',
+    })
+    if (!valid) return false
+
+    // Not a typed field (see loadProject), so there is no input to outline —
+    // only a message.
+    if (!form.office_id) {
+      toast.error(
+        'Engineering Office not found',
+        'Ask an admin to add it to the offices list before saving this project.',
+      )
+      return false
     }
-    if (!form.funding_source.trim()) missing.push(REQUIRED_FIELD_LABELS.funding_source)
-    if (!form.start_date_planned) missing.push(REQUIRED_FIELD_LABELS.start_date_planned)
-    if (!form.end_date_planned) missing.push(REQUIRED_FIELD_LABELS.end_date_planned)
-    if (!form.office_id) missing.push(REQUIRED_FIELD_LABELS.office_id)
-    return missing
+    return true
   }
 
   function buildPayload() {
@@ -345,14 +379,8 @@ export default function ProjectForm() {
 
   async function handleSaveDraft(event) {
     event.preventDefault()
-    if (!form.title.trim()) {
-      toast.error('Project name required', 'Give the project a name before saving.')
-      return
-    }
-    if (form.start_date_planned && form.end_date_planned && form.end_date_planned < form.start_date_planned) {
-      toast.error('Invalid schedule', 'Target completion date cannot be before the proposed start date.')
-      return
-    }
+    if (!validateRequiredFields()) return
+    if (!confirmedBy.require()) return
 
     setSaving(true)
     const payload = buildPayload()
@@ -369,6 +397,7 @@ export default function ProjectForm() {
         toast.error('Could not create project', error?.message ?? 'Unexpected error creating the project.')
         return
       }
+      await confirmedBy.record(data.id, 'Created the project')
       clearDraft(draftKey)
       toast.success('Draft created', 'You can now submit it for review when ready.')
       navigate('/mpdc/projects')
@@ -384,6 +413,7 @@ export default function ProjectForm() {
       toast.error('Could not save changes', error.message)
       return
     }
+    await confirmedBy.record(project.id, 'Updated the project details')
     clearDraft(draftKey)
     // The saved values are the clean state now, so nothing is left "unsaved"
     // and the mirror below has nothing to re-write on the way out.
@@ -393,9 +423,8 @@ export default function ProjectForm() {
   }
 
   async function handleSubmitForReview() {
-    const missing = getMissingFields()
-    if (missing.length > 0) {
-      toast.error('Project is incomplete', `Missing: ${missing.join(', ')}.`)
+    if (!validateRequiredFields() || !confirmedBy.require()) {
+      setShowSubmitPanel(false)
       return
     }
 
@@ -464,12 +493,15 @@ export default function ProjectForm() {
       if (notifyError) toast.error('Submitted, but could not notify Engineering', notifyError.message)
     }
 
+    await confirmedBy.record(project.id, 'Submitted the project for review')
     setSubmitting(false)
     toast.success('Project submitted', 'It has been added to the review queue.')
     navigate('/mpdc/projects')
   }
 
   async function handleEndorse() {
+    if (!confirmedBy.require()) return
+
     const confirmed = await confirm({
       title: 'Endorse this project to BAC?',
       description: 'BAC will be notified and can begin procurement.',
@@ -495,6 +527,7 @@ export default function ProjectForm() {
       return
     }
 
+    await confirmedBy.record(project.id, 'Endorsed the project to BAC')
     toast.success('Project endorsed', 'BAC has been notified and can begin procurement.')
     navigate('/mpdc/projects')
   }
@@ -505,10 +538,10 @@ export default function ProjectForm() {
   // project, never reject it (20260929100000_mpdc_approval_authority.sql).
   async function handleReject() {
     const trimmedRemarks = rejectRemarks.trim()
-    if (!trimmedRemarks) {
-      toast.error('Remarks required', 'Please provide the reason for rejecting this project.')
+    if (!rejectErrors.validate({ reject_remarks: !trimmedRemarks && 'Enter the reason for rejecting this project.' })) {
       return
     }
+    if (!confirmedBy.require()) return
 
     const confirmed = await confirm({
       title: 'Reject this project?',
@@ -568,6 +601,7 @@ export default function ProjectForm() {
       if (notifyError) toast.error('Rejected, but could not notify Engineering', notifyError.message)
     }
 
+    await confirmedBy.record(project.id, 'Rejected the project')
     setRejecting(false)
     toast.success('Project rejected', 'The decision has been recorded.')
     navigate('/mpdc/projects')
@@ -618,7 +652,7 @@ export default function ProjectForm() {
     <div>
       <PageHeader
         title={isNew ? 'New Project' : project.title}
-        description={isNew ? 'Create a project and save it as a draft.' : project.project_code}
+        description={isNew ? 'Create a project and save it as a draft.' : project.project_code ? `Project Code: ${project.project_code}` : undefined}
         breadcrumbs={[
           { label: 'Dashboard', to: '/mpdc' },
           { label: 'My Projects', to: '/mpdc/projects' },
@@ -664,11 +698,11 @@ export default function ProjectForm() {
               </label>
               <input
                 id="title"
-                required
                 value={form.title}
                 onChange={(event) => updateField('title', event.target.value)}
-                className={inputClass}
+                className={inputClass + invalidClass(errors.title)}
               />
+              <FieldError message={errors.title} />
             </div>
 
             <div className="sm:col-span-2">
@@ -680,8 +714,9 @@ export default function ProjectForm() {
                 rows={3}
                 value={form.description}
                 onChange={(event) => updateField('description', event.target.value)}
-                className={textareaClass}
+                className={textareaClass + invalidClass(errors.description)}
               />
+              <FieldError message={errors.description} />
             </div>
 
             <div>
@@ -693,8 +728,9 @@ export default function ProjectForm() {
                 placeholder="e.g. Solar Streetlights, Site Development (Access Road)"
                 value={form.project_category}
                 onChange={(event) => updateField('project_category', event.target.value)}
-                className={inputClass}
+                className={inputClass + invalidClass(errors.project_category)}
               />
+              <FieldError message={errors.project_category} />
             </div>
 
             <div>
@@ -707,7 +743,7 @@ export default function ProjectForm() {
                   ref={sectorTriggerRef}
                   type="button"
                   onClick={() => sectorPopover.setOpen((current) => !current)}
-                  className={`${inputClass} flex items-center justify-between text-left`}
+                  className={`${inputClass} flex items-center justify-between text-left${invalidClass(errors.sector)}`}
                 >
                   <span className={form.sector ? 'text-slate-900' : 'text-slate-400'}>
                     {SECTOR_LABELS[form.sector] ?? (form.sector || 'Select a category')}
@@ -736,6 +772,7 @@ export default function ProjectForm() {
                   </div>
                 ) : null}
               </div>
+              <FieldError message={errors.sector} />
             </div>
 
             <div>
@@ -762,7 +799,7 @@ export default function ProjectForm() {
                   ref={barangayTriggerRef}
                   type="button"
                   onClick={() => barangayPopover.setOpen((current) => !current)}
-                  className={`${inputClass} flex items-center justify-between text-left`}
+                  className={`${inputClass} flex items-center justify-between text-left${invalidClass(errors.barangay)}`}
                 >
                   <span className={form.barangay ? 'text-black' : 'text-slate-400'}>
                     {form.barangay || 'Select a barangay'}
@@ -791,6 +828,7 @@ export default function ProjectForm() {
                   </div>
                 ) : null}
               </div>
+              <FieldError message={errors.barangay} />
             </div>
 
             <div className="sm:col-span-2">
@@ -802,8 +840,9 @@ export default function ProjectForm() {
                 placeholder="Purok / sitio / landmark"
                 value={form.location_text}
                 onChange={(event) => updateField('location_text', event.target.value)}
-                className={inputClass}
+                className={inputClass + invalidClass(errors.location_text)}
               />
+              <FieldError message={errors.location_text} />
             </div>
           </fieldset>
 
@@ -843,8 +882,9 @@ export default function ProjectForm() {
                 id="approved_budget"
                 value={form.approved_budget}
                 onChange={(value) => updateField('approved_budget', value)}
-                className={inputClass}
+                className={inputClass + invalidClass(errors.approved_budget)}
               />
+              <FieldError message={errors.approved_budget} />
               <p className="mt-1 text-xs text-slate-500">
                 The allocation for this project in the AIP. Engineering costs the Program of Works against
                 this figure.
@@ -860,8 +900,9 @@ export default function ProjectForm() {
                 value={form.funding_source}
                 onChange={(event) => updateField('funding_source', event.target.value)}
                 placeholder="e.g. 20% Development Fund, SB Trust Fund, National Grant"
-                className={inputClass}
+                className={inputClass + invalidClass(errors.funding_source)}
               />
+              <FieldError message={errors.funding_source} />
             </div>
 
             <div>
@@ -886,8 +927,9 @@ export default function ProjectForm() {
                 type="date"
                 value={form.start_date_planned}
                 onChange={(event) => updateField('start_date_planned', event.target.value)}
-                className={inputClass}
+                className={inputClass + invalidClass(errors.start_date_planned)}
               />
+              <FieldError message={errors.start_date_planned} />
             </div>
 
             <div>
@@ -899,8 +941,9 @@ export default function ProjectForm() {
                 type="date"
                 value={form.end_date_planned}
                 onChange={(event) => updateField('end_date_planned', event.target.value)}
-                className={inputClass}
+                className={inputClass + invalidClass(errors.end_date_planned)}
               />
+              <FieldError message={errors.end_date_planned} />
             </div>
           </fieldset>
 
@@ -939,8 +982,8 @@ export default function ProjectForm() {
           <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
             <h2 className="text-sm font-semibold text-slate-800">Program of Works</h2>
             <p className="mt-0.5 text-xs text-slate-400">
-              Submitted by Engineering during review — read-only here. The POW file itself is under
-              Documents.
+              Submitted by Engineering during review — read-only. The POW file itself is under Technical
+              Documents below.
             </p>
             <div className="mt-4 grid gap-4 sm:grid-cols-3">
               <div>
@@ -973,6 +1016,8 @@ export default function ProjectForm() {
             </div>
           </section>
         ) : null}
+
+        {!isNew && project ? <ProjectDocumentsList projectId={project.id} /> : null}
 
         {!isNew && project.status === 'SUBMITTED_FOR_REVIEW' ? (
           <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
@@ -1022,15 +1067,19 @@ export default function ProjectForm() {
 
             <div className="mt-4">
               <label htmlFor="reject_remarks" className="mb-1 block text-sm font-medium text-slate-700">
-                Rejection reason (required)
+                Rejection reason *
               </label>
               <textarea
                 id="reject_remarks"
                 rows={3}
                 value={rejectRemarks}
-                onChange={(event) => setRejectRemarks(event.target.value)}
-                className={textareaClass}
+                onChange={(event) => {
+                  setRejectRemarks(event.target.value)
+                  rejectErrors.clearError('reject_remarks')
+                }}
+                className={textareaClass + invalidClass(rejectErrors.errors.reject_remarks)}
               />
+              <FieldError message={rejectErrors.errors.reject_remarks} />
             </div>
 
             <div className="mt-3">
@@ -1039,13 +1088,22 @@ export default function ProjectForm() {
                 icon={XCircle}
                 onClick={handleReject}
                 loading={rejecting}
-                disabled={!rejectRemarks.trim()}
               >
                 Reject Project
               </Button>
             </div>
           </section>
         ) : null}
+
+        <ConfirmedBySection
+          projectId={project?.id ?? null}
+          confirmedBy={
+            editable || ['SUBMITTED_FOR_REVIEW', 'RETURNED_FOR_REVISION'].includes(project?.status)
+              ? confirmedBy
+              : null
+          }
+          refreshKey={confirmedBy.refreshKey}
+        />
       </div>
     </div>
   )

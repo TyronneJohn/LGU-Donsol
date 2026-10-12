@@ -200,7 +200,7 @@ export default function BacDashboard() {
                       <th className="px-4 py-2.5 font-medium">Procurement Status</th>
                       <th className="px-4 py-2.5 font-medium">ABC</th>
                       <th className="px-4 py-2.5 font-medium">Contractor</th>
-                      <th className="px-4 py-2.5 font-medium" />
+                      <th className="px-4 py-2.5 text-right font-medium">Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -226,7 +226,7 @@ export default function BacDashboard() {
                         <td className="px-4 py-2.5 text-slate-600">{project.procurement?.contractors?.name ?? '—'}</td>
                         <td className="px-4 py-2.5 text-right">
                           <Button to={`/bac/procurement/${project.id}`} variant="secondary" size="sm">
-                            {project.procurement ? 'Open' : 'Start Procurement'}
+                            {project.procurement ? 'View' : 'Start Procurement'}
                           </Button>
                         </td>
                       </tr>

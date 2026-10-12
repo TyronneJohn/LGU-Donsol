@@ -3,7 +3,10 @@ import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 import Button from './Button'
 import CurrencyInput from './CurrencyInput'
+import FieldError from './FieldError'
+import { invalidClass } from '../../utils/fieldStyles'
 import { useToast } from '../../hooks/useToast'
+import { useFieldErrors } from '../../hooks/useFieldErrors'
 
 const inputClass =
   'w-full rounded-md border border-slate-400 dark:border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600'
@@ -15,12 +18,19 @@ export default function SetAnnualBudgetModal({ open, year, currentAmount, onSave
   const toast = useToast()
   const [amount, setAmount] = useState(currentAmount != null ? String(currentAmount) : '')
   const [saving, setSaving] = useState(false)
+  const { errors, validate, clearError } = useFieldErrors()
 
   if (!open) return null
 
   async function handleSubmit(event) {
     event.preventDefault()
-    if (amount === '' || Number(amount) < 0) return
+    if (
+      !validate({
+        annual_budget_amount: (amount === '' || Number(amount) < 0) && 'Enter the appropriated amount.',
+      })
+    ) {
+      return
+    }
 
     setSaving(true)
     try {
@@ -64,9 +74,18 @@ export default function SetAnnualBudgetModal({ open, year, currentAmount, onSave
 
         <form onSubmit={handleSubmit}>
           <label htmlFor="annual_budget_amount" className="mb-1 block text-sm font-medium text-slate-700">
-            Appropriated amount for {year}
+            Appropriated amount for {year} *
           </label>
-          <CurrencyInput id="annual_budget_amount" value={amount} onChange={setAmount} className={inputClass} />
+          <CurrencyInput
+            id="annual_budget_amount"
+            value={amount}
+            onChange={(value) => {
+              setAmount(value)
+              clearError('annual_budget_amount')
+            }}
+            className={inputClass + invalidClass(errors.annual_budget_amount)}
+          />
+          <FieldError message={errors.annual_budget_amount} />
           <p className="mt-2 text-xs text-slate-500">
             Projects from Endorsed to BAC onward draw down against this ceiling on every office's dashboard.
           </p>
@@ -75,7 +94,7 @@ export default function SetAnnualBudgetModal({ open, year, currentAmount, onSave
             <Button type="button" variant="secondary" onClick={onClose} disabled={saving}>
               Cancel
             </Button>
-            <Button type="submit" loading={saving} disabled={amount === ''}>
+            <Button type="submit" loading={saving}>
               Save
             </Button>
           </div>

@@ -12,6 +12,8 @@ import { LoadingState } from '@shared/components/ui/LoadingState'
 import EmptyState from '@shared/components/ui/EmptyState'
 import DssPanel from '../../components/ui/DssPanel'
 import LocationModal from '../../components/LocationModal'
+import ConfirmedBySection from '../../components/ConfirmedBySection'
+import ProjectDocumentsList from '../../components/ProjectDocumentsList'
 import SitePhotoGrid from '../../components/ui/SitePhotoGrid'
 import { formatCurrency, formatDate } from '@shared/utils/format'
 import {
@@ -361,7 +363,7 @@ export default function MpdcProjectMonitoringDetail() {
     <div>
       <PageHeader
         title={project.title}
-        description={project.project_code}
+        description={project.project_code ? `Project Code: ${project.project_code}` : undefined}
         breadcrumbs={[
           { label: 'Dashboard', to: '/mpdc' },
           { label: 'Monitoring', to: '/mpdc/monitoring' },
@@ -450,6 +452,10 @@ export default function MpdcProjectMonitoringDetail() {
             View History
           </Button>
         </section>
+
+        <ProjectDocumentsList projectId={project.id} />
+
+        <ConfirmedBySection projectId={project.id} />
       </div>
 
       <LocationModal open={locationOpen} project={project} onClose={() => setLocationOpen(false)} />

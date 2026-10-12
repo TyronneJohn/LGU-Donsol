@@ -2,10 +2,13 @@ import { useEffect, useState } from 'react'
 import { Landmark, Pencil, Plus, Trash2 } from 'lucide-react'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
+import { useFieldErrors } from '../../hooks/useFieldErrors'
 import { useConfirm } from '../../hooks/useConfirm'
 import { useFormDraft, readDraft, clearDraft } from '../../hooks/useFormDraft'
 import PageHeader from '../../components/ui/PageHeader'
 import Button from '../../components/ui/Button'
+import FieldError from '../../components/ui/FieldError'
+import { invalidClass } from '../../utils/fieldStyles'
 import { LoadingState } from '@shared/components/ui/LoadingState'
 import EmptyState from '@shared/components/ui/EmptyState'
 
@@ -16,6 +19,7 @@ const EMPTY_FORM = { code: '', name: '', description: '' }
 
 export default function Offices() {
   const toast = useToast()
+  const { errors, validate, clearError, clearErrors } = useFieldErrors()
   const confirm = useConfirm()
   const [offices, setOffices] = useState([])
   const [loading, setLoading] = useState(true)
@@ -49,6 +53,7 @@ export default function Offices() {
 
   function updateField(field, value) {
     setForm((current) => ({ ...current, [field]: value }))
+    clearError(field)
   }
 
   function openAddForm() {
@@ -70,6 +75,7 @@ export default function Offices() {
   // successful save, and neither leaves anything worth restoring.
   function closeForm() {
     clearDraft(`office:${editingId ?? 'new'}`)
+    clearErrors()
     setFormOpen(false)
     setEditingId(null)
     setCleanForm(EMPTY_FORM)
@@ -78,8 +84,12 @@ export default function Offices() {
 
   async function handleSubmit(event) {
     event.preventDefault()
-    if (!form.code.trim() || !form.name.trim()) {
-      toast.error('Code and name are required')
+    if (
+      !validate({
+        code: !form.code.trim() && 'Code is required.',
+        name: !form.name.trim() && 'Name is required.',
+      })
+    ) {
       return
     }
 
@@ -150,30 +160,30 @@ export default function Offices() {
         >
           <div>
             <label htmlFor="code" className="mb-1 block text-sm font-medium text-slate-700">
-              Code
+              Code *
             </label>
             <input
               id="code"
-              required
               value={form.code}
               onChange={(event) => updateField('code', event.target.value)}
-              className={inputClass}
+              className={inputClass + invalidClass(errors.code)}
               placeholder="e.g. ENGG"
             />
+            <FieldError message={errors.code} />
           </div>
 
           <div>
             <label htmlFor="name" className="mb-1 block text-sm font-medium text-slate-700">
-              Name
+              Name *
             </label>
             <input
               id="name"
-              required
               value={form.name}
               onChange={(event) => updateField('name', event.target.value)}
-              className={inputClass}
+              className={inputClass + invalidClass(errors.name)}
               placeholder="e.g. Engineering Office"
             />
+            <FieldError message={errors.name} />
           </div>
 
           <div className="sm:col-span-2">

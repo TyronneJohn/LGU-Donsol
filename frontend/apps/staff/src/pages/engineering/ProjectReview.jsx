@@ -3,6 +3,8 @@ import { ArrowRight, ClipboardCheck } from 'lucide-react'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
 import PageHeader from '../../components/ui/PageHeader'
+import Pagination from '../../components/ui/Pagination'
+import { usePagination } from '../../hooks/usePagination'
 import Button from '../../components/ui/Button'
 import { LoadingState } from '@shared/components/ui/LoadingState'
 import EmptyState from '@shared/components/ui/EmptyState'
@@ -37,6 +39,8 @@ export default function ProjectReview() {
     loadProjects()
   }, [])
 
+  const pagination = usePagination(projects, [])
+
   return (
     <div>
       <PageHeader
@@ -68,7 +72,7 @@ export default function ProjectReview() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {projects.map((project) => (
+              {pagination.pageItems.map((project) => (
                 <tr key={project.id}>
                   <td className="px-4 py-2.5 text-slate-800">{project.project_code}</td>
                   <td className="px-4 py-2.5 text-slate-800">{project.title}</td>
@@ -87,6 +91,8 @@ export default function ProjectReview() {
           </table>
         </div>
       )}
+
+      {!loading ? <Pagination {...pagination} /> : null}
     </div>
   )
 }

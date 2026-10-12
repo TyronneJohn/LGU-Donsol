@@ -26,18 +26,26 @@ export default function AuditLog() {
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [hasMore, setHasMore] = useState(true)
+  const [officeFilter, setOfficeFilter] = useState('')
   const [entityFilter, setEntityFilter] = useState('')
   const [actionFilter, setActionFilter] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
 
   function buildQuery(offset) {
+    // Filtering by office goes through the actor's profile role (each office
+    // maps 1:1 to a login role). That needs an inner join so non-matching
+    // rows are dropped rather than returned with a null actor — but only
+    // while the filter is on, so system-generated entries (no actor) still
+    // show under "All offices".
+    const actorJoin = officeFilter ? 'profiles!audit_logs_actor_id_fkey!inner' : 'profiles!audit_logs_actor_id_fkey'
     let query = supabase
       .from('audit_logs')
-      .select('id, action, entity_type, entity_id, description, created_at, actor:profiles!audit_logs_actor_id_fkey(full_name, role)')
+      .select(`id, action, entity_type, entity_id, description, created_at, actor:${actorJoin}(full_name, role)`)
       .order('created_at', { ascending: false })
       .range(offset, offset + PAGE_SIZE - 1)
 
+    if (officeFilter) query = query.eq('actor.role', officeFilter)
     if (entityFilter) query = query.eq('entity_type', entityFilter)
     if (actionFilter) query = query.eq('action', actionFilter)
     if (dateFrom) query = query.gte('created_at', `${dateFrom}T00:00:00`)
@@ -80,7 +88,7 @@ export default function AuditLog() {
 
   useEffect(() => {
     loadFirstPage()
-  }, [entityFilter, actionFilter, dateFrom, dateTo])
+  }, [officeFilter, entityFilter, actionFilter, dateFrom, dateTo])
 
   return (
     <div>
@@ -91,6 +99,20 @@ export default function AuditLog() {
       />
 
       <div className="mb-4 flex flex-wrap gap-3">
+        <select
+          value={officeFilter}
+          onChange={(event) => setOfficeFilter(event.target.value)}
+          className={selectClass}
+          aria-label="Office"
+        >
+          <option value="">All offices</option>
+          {Object.entries(ROLE_LABELS).map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
+
         <select value={entityFilter} onChange={(event) => setEntityFilter(event.target.value)} className={selectClass}>
           <option value="">All entities</option>
           {Object.entries(ENTITY_TYPE_LABELS).map(([value, label]) => (

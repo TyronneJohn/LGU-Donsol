@@ -6,13 +6,18 @@ import { useToast } from '../../hooks/useToast'
 import { useConfirm } from '../../hooks/useConfirm'
 import { useAuth } from '../../hooks/useAuth'
 import { useFormDraft, readDraft, clearDraft } from '../../hooks/useFormDraft'
+import { useFieldErrors } from '../../hooks/useFieldErrors'
+import { useConfirmedBy } from '../../hooks/useConfirmedBy'
 import PageHeader from '../../components/ui/PageHeader'
 import Button from '../../components/ui/Button'
 import CurrencyInput from '../../components/ui/CurrencyInput'
+import FieldError from '../../components/ui/FieldError'
+import { invalidClass, invalidFileClass } from '../../utils/fieldStyles'
 import Badge from '@shared/components/ui/Badge'
 import { LoadingState } from '@shared/components/ui/LoadingState'
 import EmptyState from '@shared/components/ui/EmptyState'
 import LocationModal from '../../components/LocationModal'
+import ConfirmedBySection from '../../components/ConfirmedBySection'
 import { formatCurrency, formatDate } from '@shared/utils/format'
 import {
   PROJECT_STATUS_LABELS,
@@ -122,6 +127,13 @@ export default function BacProcurementDetail() {
 
   const [technicalDocuments, setTechnicalDocuments] = useState([])
   const [locationOpen, setLocationOpen] = useState(false)
+
+  const startErrors = useFieldErrors()
+  const editErrors = useFieldErrors()
+  const awardErrors = useFieldErrors()
+  const contractErrors = useFieldErrors()
+  const docErrors = useFieldErrors()
+  const confirmedBy = useConfirmedBy()
 
   async function loadContractors() {
     const { data, error } = await supabase.from('contractors').select('id, name').order('name', { ascending: true })
@@ -316,6 +328,17 @@ export default function BacProcurementDetail() {
 
   async function handleStartProcurement(event) {
     event.preventDefault()
+    if (
+      !startErrors.validate({
+        mode: !startForm.mode_of_procurement.trim() && 'Mode of Procurement is required.',
+        abc:
+          (startForm.abc_amount === '' || Number(startForm.abc_amount) <= 0) &&
+          'Enter an ABC greater than zero.',
+      })
+    ) {
+      return
+    }
+    if (!confirmedBy.require()) return
     setStarting(true)
 
     const { error } = await supabase.from('procurement').insert({
@@ -331,6 +354,7 @@ export default function BacProcurementDetail() {
       toast.error('Could not start procurement', error.message)
       return
     }
+    await confirmedBy.record(projectId, 'Started procurement')
     toast.success('Procurement opened', 'The project has moved to For Procurement.')
     setStartForm(EMPTY_START_FORM)
     clearDraft(startDraftKey(projectId))
@@ -339,6 +363,16 @@ export default function BacProcurementDetail() {
 
   async function handleSaveDetails(event) {
     event.preventDefault()
+    if (
+      !editErrors.validate({
+        edit_mode: !String(editForm.mode_of_procurement ?? '').trim() && 'Mode of Procurement is required.',
+        edit_abc:
+          (editForm.abc_amount === '' || Number(editForm.abc_amount) <= 0) && 'Enter an ABC greater than zero.',
+      })
+    ) {
+      return
+    }
+    if (!confirmedBy.require()) return
     setSavingDetails(true)
 
     const { error } = await supabase
@@ -355,6 +389,7 @@ export default function BacProcurementDetail() {
       toast.error('Could not save procurement details', error.message)
       return
     }
+    await confirmedBy.record(projectId, 'Updated the procurement details')
     toast.success('Procurement details saved')
     setIsEditingDetails(false)
     clearDraft(editDraftKey(projectId))
@@ -370,14 +405,19 @@ export default function BacProcurementDetail() {
       })
     }
     setIsEditingDetails(false)
+    editErrors.clearErrors()
     clearDraft(editDraftKey(projectId))
   }
 
   async function handleRecordAward() {
-    if (!awardContractorId) {
-      toast.error('Select a contractor', 'Choose the winning bidder before recording the award.')
+    if (
+      !awardErrors.validate({
+        award_contractor: !awardContractorId && 'Choose the winning bidder before recording the award.',
+      })
+    ) {
       return
     }
+    if (!confirmedBy.require()) return
 
     const confirmed = await confirm({
       title: 'Record this award?',
@@ -401,6 +441,8 @@ export default function BacProcurementDetail() {
       toast.error('Could not record award', error.message)
       return
     }
+    const awardedName = contractors.find((contractor) => contractor.id === awardContractorId)?.name
+    await confirmedBy.record(projectId, awardedName ? `Recorded the award to ${awardedName}` : 'Recorded the award')
     toast.success('Award recorded', 'MPDC has been notified.')
     setIsEditingAward(false)
     loadData()
@@ -408,6 +450,17 @@ export default function BacProcurementDetail() {
 
   async function handleSaveContract(event) {
     event.preventDefault()
+    if (
+      !contractErrors.validate({
+        contract_number: !contractForm.contract_number.trim() && 'Contract Number is required.',
+        contract_amount:
+          (contractForm.contract_amount === '' || Number(contractForm.contract_amount) <= 0) &&
+          'Enter a contract amount greater than zero.',
+      })
+    ) {
+      return
+    }
+    if (!confirmedBy.require()) return
     setSavingContract(true)
 
     const payload = {
@@ -431,6 +484,7 @@ export default function BacProcurementDetail() {
       toast.error('Could not save contract', error.message)
       return
     }
+    await confirmedBy.record(projectId, 'Saved the contract details')
     toast.success(
       'Contract saved',
       payload.status === 'CONTRACT_SIGNED' ? 'Project moved to For Implementation.' : undefined,
@@ -452,10 +506,13 @@ export default function BacProcurementDetail() {
       })
     }
     setIsEditingContract(false)
+    contractErrors.clearErrors()
     clearDraft(contractDraftKey(projectId))
   }
 
   async function handleMarkCompleted() {
+    if (!confirmedBy.require()) return
+
     const confirmed = await confirm({
       title: 'Mark procurement as completed?',
       description: 'This closes out BAC paperwork for this cycle. It does not affect the project implementation status.',
@@ -468,21 +525,23 @@ export default function BacProcurementDetail() {
       toast.error('Could not mark completed', error.message)
       return
     }
+    await confirmedBy.record(projectId, 'Marked procurement as completed')
     toast.success('Procurement marked completed')
     loadData()
   }
 
   async function handleUploadDocument(event) {
     event.preventDefault()
-    if (!docForm.title.trim()) {
-      toast.error('Title required', 'Enter a title for this document.')
-      return
-    }
-    if (!docForm.file) {
-      toast.error('Choose a file', 'Select a file to upload.')
+    if (
+      !docErrors.validate({
+        doc_title: !docForm.title.trim() && 'Enter a title for this document.',
+        doc_file: !docForm.file && 'Select a file to upload.',
+      })
+    ) {
       return
     }
 
+    if (!confirmedBy.require()) return
     setUploadingDoc(true)
     const path = `${procurement.id}/${crypto.randomUUID()}-${docForm.file.name}`
 
@@ -509,6 +568,7 @@ export default function BacProcurementDetail() {
       return
     }
     setDocForm(EMPTY_DOC_FORM)
+    await confirmedBy.record(projectId, 'Uploaded a procurement document')
     toast.success('Document uploaded')
     loadProcurementDetails(procurement.id)
   }
@@ -556,7 +616,7 @@ export default function BacProcurementDetail() {
     <div>
       <PageHeader
         title={project.title}
-        description={project.project_code}
+        description={project.project_code ? `Project Code: ${project.project_code}` : undefined}
         breadcrumbs={[
           { label: 'Dashboard', to: '/bac' },
           { label: 'Procurement', to: '/bac/procurement' },
@@ -647,26 +707,34 @@ export default function BacProcurementDetail() {
             <div className="mt-4 grid gap-4 sm:grid-cols-3">
               <div>
                 <label htmlFor="mode" className="mb-1 block text-sm font-medium text-slate-700">
-                  Mode of Procurement
+                  Mode of Procurement *
                 </label>
                 <input
                   id="mode"
                   placeholder="e.g. Public Bidding"
                   value={startForm.mode_of_procurement}
-                  onChange={(event) => setStartForm((f) => ({ ...f, mode_of_procurement: event.target.value }))}
-                  className={inputClass}
+                  onChange={(event) => {
+                    setStartForm((f) => ({ ...f, mode_of_procurement: event.target.value }))
+                    startErrors.clearError('mode')
+                  }}
+                  className={inputClass + invalidClass(startErrors.errors.mode)}
                 />
+                <FieldError message={startErrors.errors.mode} />
               </div>
               <div>
                 <label htmlFor="abc" className="mb-1 block text-sm font-medium text-slate-700">
-                  Approved Budget for the Contract (ABC)
+                  Approved Budget for the Contract (ABC) *
                 </label>
                 <CurrencyInput
                   id="abc"
                   value={startForm.abc_amount}
-                  onChange={(value) => setStartForm((f) => ({ ...f, abc_amount: value }))}
-                  className={inputClass}
+                  onChange={(value) => {
+                    setStartForm((f) => ({ ...f, abc_amount: value }))
+                    startErrors.clearError('abc')
+                  }}
+                  className={inputClass + invalidClass(startErrors.errors.abc)}
                 />
+                <FieldError message={startErrors.errors.abc} />
                 {project.pow_amount != null ? (
                   <p className="mt-1 text-xs text-slate-400">
                     Defaulted to Engineering's Program of Works — adjust if needed.
@@ -719,26 +787,34 @@ export default function BacProcurementDetail() {
                   <div className="mt-4 grid gap-4 sm:grid-cols-3">
                     <div>
                       <label htmlFor="edit_mode" className="mb-1 block text-sm font-medium text-slate-700">
-                        Mode of Procurement
+                        Mode of Procurement *
                       </label>
                       <input
                         id="edit_mode"
                         placeholder="e.g. Public Bidding"
                         value={editForm.mode_of_procurement}
-                        onChange={(event) => setEditForm((f) => ({ ...f, mode_of_procurement: event.target.value }))}
-                        className={inputClass}
+                        onChange={(event) => {
+                          setEditForm((f) => ({ ...f, mode_of_procurement: event.target.value }))
+                          editErrors.clearError('edit_mode')
+                        }}
+                        className={inputClass + invalidClass(editErrors.errors.edit_mode)}
                       />
+                      <FieldError message={editErrors.errors.edit_mode} />
                     </div>
                     <div>
                       <label htmlFor="edit_abc" className="mb-1 block text-sm font-medium text-slate-700">
-                        ABC
+                        ABC *
                       </label>
                       <CurrencyInput
                         id="edit_abc"
                         value={editForm.abc_amount}
-                        onChange={(value) => setEditForm((f) => ({ ...f, abc_amount: value }))}
-                        className={inputClass}
+                        onChange={(value) => {
+                          setEditForm((f) => ({ ...f, abc_amount: value }))
+                          editErrors.clearError('edit_abc')
+                        }}
+                        className={inputClass + invalidClass(editErrors.errors.edit_abc)}
                       />
+                      <FieldError message={editErrors.errors.edit_abc} />
                     </div>
                     <div>
                       <label htmlFor="edit_bid_opening" className="mb-1 block text-sm font-medium text-slate-700">
@@ -791,16 +867,19 @@ export default function BacProcurementDetail() {
                     ) : null}
                   </div>
                 ) : (
-                  <div className="flex flex-wrap items-end gap-3">
+                  <div className="flex flex-wrap items-start gap-3">
                     <div className="min-w-55">
                       <label htmlFor="award_contractor" className="mb-1 block text-sm font-medium text-slate-700">
-                        Winning Contractor
+                        Winning Contractor *
                       </label>
                       <select
                         id="award_contractor"
                         value={awardContractorId}
-                        onChange={(event) => setAwardContractorId(event.target.value)}
-                        className={inputClass}
+                        onChange={(event) => {
+                          setAwardContractorId(event.target.value)
+                          awardErrors.clearError('award_contractor')
+                        }}
+                        className={inputClass + invalidClass(awardErrors.errors.award_contractor)}
                       >
                         <option value="">Select contractor</option>
                         {contractors.map((c) => (
@@ -809,13 +888,15 @@ export default function BacProcurementDetail() {
                           </option>
                         ))}
                       </select>
+                      <FieldError message={awardErrors.errors.award_contractor} />
                     </div>
                     <Button
                       type="button"
                       icon={Gavel}
                       loading={awarding}
-                      disabled={!awardContractorId || awardContractorId === procurement.contractor_id}
+                      disabled={Boolean(awardContractorId) && awardContractorId === procurement.contractor_id}
                       onClick={handleRecordAward}
+                      className="mt-6"
                     >
                       Record Award
                     </Button>
@@ -824,8 +905,10 @@ export default function BacProcurementDetail() {
                         type="button"
                         variant="ghost"
                         size="sm"
+                        className="mt-6"
                         onClick={() => {
                           setAwardContractorId(procurement.contractor_id ?? '')
+                          awardErrors.clearErrors()
                           setIsEditingAward(false)
                         }}
                       >
@@ -869,27 +952,33 @@ export default function BacProcurementDetail() {
                       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                         <div>
                           <label htmlFor="contract_number" className="mb-1 block text-sm font-medium text-slate-700">
-                            Contract Number
+                            Contract Number *
                           </label>
                           <input
                             id="contract_number"
                             value={contractForm.contract_number}
-                            onChange={(event) =>
+                            onChange={(event) => {
                               setContractForm((f) => ({ ...f, contract_number: event.target.value }))
-                            }
-                            className={inputClass}
+                              contractErrors.clearError('contract_number')
+                            }}
+                            className={inputClass + invalidClass(contractErrors.errors.contract_number)}
                           />
+                          <FieldError message={contractErrors.errors.contract_number} />
                         </div>
                         <div>
                           <label htmlFor="contract_amount" className="mb-1 block text-sm font-medium text-slate-700">
-                            Contract Amount
+                            Contract Amount *
                           </label>
                           <CurrencyInput
                             id="contract_amount"
                             value={contractForm.contract_amount}
-                            onChange={(value) => setContractForm((f) => ({ ...f, contract_amount: value }))}
-                            className={inputClass}
+                            onChange={(value) => {
+                              setContractForm((f) => ({ ...f, contract_amount: value }))
+                              contractErrors.clearError('contract_amount')
+                            }}
+                            className={inputClass + invalidClass(contractErrors.errors.contract_amount)}
                           />
+                          <FieldError message={contractErrors.errors.contract_amount} />
                         </div>
                         <div>
                           <label
@@ -1056,26 +1145,33 @@ export default function BacProcurementDetail() {
               >
                 <div>
                   <label htmlFor="doc_title" className="mb-1 block text-sm font-medium text-slate-700">
-                    Title
+                    Title *
                   </label>
                   <input
                     id="doc_title"
                     value={docForm.title}
-                    onChange={(event) => setDocForm((f) => ({ ...f, title: event.target.value }))}
-                    className={inputClass}
-                    required
+                    onChange={(event) => {
+                      setDocForm((f) => ({ ...f, title: event.target.value }))
+                      docErrors.clearError('doc_title')
+                    }}
+                    className={inputClass + invalidClass(docErrors.errors.doc_title)}
                   />
+                  <FieldError message={docErrors.errors.doc_title} />
                 </div>
                 <div>
                   <label htmlFor="doc_file" className="mb-1 block text-sm font-medium text-slate-700">
-                    File
+                    File *
                   </label>
                   <input
                     id="doc_file"
                     type="file"
-                    onChange={(event) => setDocForm((f) => ({ ...f, file: event.target.files?.[0] ?? null }))}
-                    className="block w-full text-sm text-slate-600 file:mr-3 file:cursor-pointer file:rounded-md file:border file:border-slate-300 file:bg-white file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-50"
+                    onChange={(event) => {
+                      setDocForm((f) => ({ ...f, file: event.target.files?.[0] ?? null }))
+                      docErrors.clearError('doc_file')
+                    }}
+                    className={`block w-full text-sm text-slate-600 file:mr-3 file:cursor-pointer file:rounded-md file:border file:border-slate-300 file:bg-white file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-50${invalidFileClass(docErrors.errors.doc_file)}`}
                   />
+                  <FieldError message={docErrors.errors.doc_file} />
                 </div>
                 <div className="sm:col-span-2">
                   <Button type="submit" variant="secondary" size="sm" icon={Upload} loading={uploadingDoc}>
@@ -1086,6 +1182,8 @@ export default function BacProcurementDetail() {
             </section>
           </>
         )}
+
+        <ConfirmedBySection projectId={projectId} confirmedBy={confirmedBy} refreshKey={confirmedBy.refreshKey} />
       </div>
 
       <LocationModal open={locationOpen} project={project} onClose={() => setLocationOpen(false)} />

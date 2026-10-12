@@ -4,8 +4,12 @@ import { FileText, Pencil, Plus, RefreshCw, Trash2, Undo2, X } from 'lucide-reac
 import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../hooks/useToast'
 import { useAuth } from '../hooks/useAuth'
+import { useFieldErrors } from '../hooks/useFieldErrors'
 import Button from './ui/Button'
 import CurrencyInput from './ui/CurrencyInput'
+import FieldError from './ui/FieldError'
+import { invalidClass } from '../utils/fieldStyles'
+import { DOCUMENT_ACCEPT, DOCUMENT_RULES_TEXT, pickDocuments } from '../utils/documentUpload'
 import { SECTOR_LABELS } from '@shared/utils/projectStatus'
 import { DONSOL_BARANGAYS } from '@shared/utils/barangays'
 import { DONSOL_BARANGAY_CENTROIDS } from '@shared/utils/barangayCentroids'
@@ -70,15 +74,26 @@ function toForm(project) {
   }
 }
 
-function Field({ id, label, className = '', children }) {
+function Field({ id, label, className = '', error, children }) {
   return (
     <div className={className}>
       <label htmlFor={id} className="mb-1 block text-sm font-medium text-slate-700">
         {label}
       </label>
       {children}
+      <FieldError message={error} />
     </div>
   )
+}
+
+// Which validation messages (keyed by input id) a change to each field can
+// resolve — editing either date of a pair may fix an "end before start" error.
+const ERROR_IDS_BY_FIELD = {
+  title: ['edit-title'],
+  start_date_planned: ['edit-end-planned'],
+  end_date_planned: ['edit-end-planned'],
+  start_date_actual: ['edit-end-actual'],
+  end_date_actual: ['edit-end-actual'],
 }
 
 // Admin's in-place edit of a project's details, replacing the old hard
@@ -94,6 +109,8 @@ function Field({ id, label, className = '', children }) {
 export default function EditProjectModal({ open, project, documents = [], onClose, onSaved }) {
   const toast = useToast()
   const { user } = useAuth()
+  const fieldErrors = useFieldErrors()
+  const { clearErrors: clearFieldErrors } = fieldErrors
   const [form, setForm] = useState(() => (project ? toForm(project) : null))
   const [saving, setSaving] = useState(false)
   // doc id -> { action: 'replace', file } | { action: 'remove' }
@@ -110,8 +127,9 @@ export default function EditProjectModal({ open, project, documents = [], onClos
       setDocChanges({})
       setNewDocs([])
       setNewDocCategory('OTHER')
+      clearFieldErrors()
     }
-  }, [open, project])
+  }, [open, project, clearFieldErrors])
 
   useEffect(() => {
     if (!open) return undefined
@@ -127,6 +145,7 @@ export default function EditProjectModal({ open, project, documents = [], onClos
 
   function updateField(field, value) {
     setForm((current) => ({ ...current, [field]: value }))
+    ERROR_IDS_BY_FIELD[field]?.forEach((id) => fieldErrors.clearError(id))
   }
 
   // Same rule as the MPDC form: coordinates always follow the barangay's
@@ -147,7 +166,7 @@ export default function EditProjectModal({ open, project, documents = [], onClos
   }
 
   function handleReplacementChosen(event) {
-    const file = event.target.files?.[0]
+    const file = pickDocuments(event, toast)[0]
     const doc = replaceTargetRef.current
     event.target.value = ''
     if (!file || !doc) return
@@ -167,7 +186,7 @@ export default function EditProjectModal({ open, project, documents = [], onClos
   }
 
   function handleNewFilesChosen(event) {
-    const files = Array.from(event.target.files ?? [])
+    const files = pickDocuments(event, toast)
     event.target.value = ''
     if (files.length === 0) return
     setNewDocs((current) => [
@@ -217,16 +236,21 @@ export default function EditProjectModal({ open, project, documents = [], onClos
 
   async function handleSubmit(event) {
     event.preventDefault()
-    if (!form.title.trim()) {
-      toast.error('Project name required')
-      return
-    }
-    if (form.start_date_planned && form.end_date_planned && form.end_date_planned < form.start_date_planned) {
-      toast.error('Invalid schedule', 'Target completion date cannot be before the proposed start date.')
-      return
-    }
-    if (form.start_date_actual && form.end_date_actual && form.end_date_actual < form.start_date_actual) {
-      toast.error('Invalid schedule', 'Actual end date cannot be before the actual start date.')
+    if (
+      !fieldErrors.validate({
+        'edit-title': !form.title.trim() && 'Project Name is required.',
+        'edit-end-planned':
+          form.start_date_planned &&
+          form.end_date_planned &&
+          form.end_date_planned < form.start_date_planned &&
+          'Target completion date cannot be before the proposed start date.',
+        'edit-end-actual':
+          form.start_date_actual &&
+          form.end_date_actual &&
+          form.end_date_actual < form.start_date_actual &&
+          'Actual end date cannot be before the actual start date.',
+      })
+    ) {
       return
     }
 
@@ -302,13 +326,12 @@ export default function EditProjectModal({ open, project, documents = [], onClos
         </div>
 
         <div className="grid gap-4 overflow-y-auto p-5 sm:grid-cols-2">
-          <Field id="edit-title" label="Project Name *" className="sm:col-span-2">
+          <Field id="edit-title" label="Project Name *" className="sm:col-span-2" error={fieldErrors.errors['edit-title']}>
             <input
               id="edit-title"
-              required
               value={form.title}
               onChange={(event) => updateField('title', event.target.value)}
-              className={inputClass}
+              className={inputClass + invalidClass(fieldErrors.errors['edit-title'])}
             />
           </Field>
 
@@ -401,13 +424,13 @@ export default function EditProjectModal({ open, project, documents = [], onClos
             />
           </Field>
 
-          <Field id="edit-end-planned" label="Planned End">
+          <Field id="edit-end-planned" label="Planned End" error={fieldErrors.errors['edit-end-planned']}>
             <input
               id="edit-end-planned"
               type="date"
               value={form.end_date_planned}
               onChange={(event) => updateField('end_date_planned', event.target.value)}
-              className={inputClass}
+              className={inputClass + invalidClass(fieldErrors.errors['edit-end-planned'])}
             />
           </Field>
 
@@ -421,13 +444,13 @@ export default function EditProjectModal({ open, project, documents = [], onClos
             />
           </Field>
 
-          <Field id="edit-end-actual" label="Actual End">
+          <Field id="edit-end-actual" label="Actual End" error={fieldErrors.errors['edit-end-actual']}>
             <input
               id="edit-end-actual"
               type="date"
               value={form.end_date_actual}
               onChange={(event) => updateField('end_date_actual', event.target.value)}
-              className={inputClass}
+              className={inputClass + invalidClass(fieldErrors.errors['edit-end-actual'])}
             />
           </Field>
 
@@ -438,8 +461,22 @@ export default function EditProjectModal({ open, project, documents = [], onClos
               Changes.
             </p>
 
-            <input ref={replaceInputRef} type="file" className="hidden" onChange={handleReplacementChosen} />
-            <input ref={addInputRef} type="file" multiple className="hidden" onChange={handleNewFilesChosen} />
+            <input
+              ref={replaceInputRef}
+              type="file"
+              accept={DOCUMENT_ACCEPT}
+              className="hidden"
+              onChange={handleReplacementChosen}
+            />
+            <input
+              ref={addInputRef}
+              type="file"
+              multiple
+              accept={DOCUMENT_ACCEPT}
+              className="hidden"
+              onChange={handleNewFilesChosen}
+            />
+            <p className="mt-1 text-xs text-slate-400">{DOCUMENT_RULES_TEXT}</p>
 
             {documents.length === 0 && newDocs.length === 0 ? (
               <p className="mt-3 text-sm text-slate-500">No documents uploaded yet.</p>

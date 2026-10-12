@@ -10,6 +10,7 @@ import { LoadingState } from '@shared/components/ui/LoadingState'
 import EmptyState from '@shared/components/ui/EmptyState'
 import DssPanel from '../../components/ui/DssPanel'
 import LocationModal from '../../components/LocationModal'
+import ConfirmedBySection from '../../components/ConfirmedBySection'
 import EditProjectModal, { DOC_CATEGORY_LABELS } from '../../components/EditProjectModal'
 import SitePhotoGrid from '../../components/ui/SitePhotoGrid'
 import { analyzeProjectImage } from '../../utils/imageAnalysis'
@@ -222,7 +223,7 @@ export default function AdminProjectDetail() {
     <div>
       <PageHeader
         title={project.title}
-        description={project.project_code}
+        description={project.project_code ? `Project Code: ${project.project_code}` : undefined}
         breadcrumbs={[
           { label: 'Dashboard', to: '/admin' },
           { label: 'Projects', to: '/admin/projects' },
@@ -440,6 +441,8 @@ export default function AdminProjectDetail() {
             </ul>
           )}
         </section>
+
+        <ConfirmedBySection projectId={project.id} />
       </div>
 
       <LocationModal open={locationOpen} project={project} onClose={() => setLocationOpen(false)} />

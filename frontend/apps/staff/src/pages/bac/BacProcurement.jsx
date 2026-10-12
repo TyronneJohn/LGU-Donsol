@@ -3,6 +3,8 @@ import { Gavel, Search } from 'lucide-react'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
 import PageHeader from '../../components/ui/PageHeader'
+import Pagination from '../../components/ui/Pagination'
+import { usePagination } from '../../hooks/usePagination'
 import Button from '../../components/ui/Button'
 import Badge from '@shared/components/ui/Badge'
 import { LoadingState } from '@shared/components/ui/LoadingState'
@@ -101,6 +103,8 @@ export default function BacProcurement() {
     })
   }, [rows, search, statusFilter])
 
+  const pagination = usePagination(filtered, [search, statusFilter])
+
   return (
     <div>
       <PageHeader
@@ -148,11 +152,11 @@ export default function BacProcurement() {
                 <th className="px-4 py-2.5 font-medium">ABC</th>
                 <th className="px-4 py-2.5 font-medium">Contractor</th>
                 <th className="px-4 py-2.5 font-medium">Opened</th>
-                <th className="px-4 py-2.5 font-medium" />
+                <th className="px-4 py-2.5 text-right font-medium">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filtered.map((row) => (
+              {pagination.pageItems.map((row) => (
                 <tr key={row.id}>
                   <td className="px-4 py-2.5 text-slate-800">{row.projects?.project_code ?? '—'}</td>
                   <td className="px-4 py-2.5 text-slate-800">{row.projects?.title}</td>
@@ -171,7 +175,7 @@ export default function BacProcurement() {
                   <td className="px-4 py-2.5 text-slate-600">{row.created_at ? formatDate(row.created_at) : '—'}</td>
                   <td className="px-4 py-2.5 text-right">
                     <Button to={`/bac/procurement/${row.project_id}`} variant="secondary" size="sm">
-                      {row.status ? 'Open' : 'Start Procurement'}
+                      {row.status ? 'View' : 'Start Procurement'}
                     </Button>
                   </td>
                 </tr>
@@ -180,6 +184,8 @@ export default function BacProcurement() {
           </table>
         </div>
       )}
+
+      {!loading ? <Pagination {...pagination} /> : null}
     </div>
   )
 }

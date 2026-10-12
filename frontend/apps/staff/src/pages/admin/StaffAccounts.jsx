@@ -3,8 +3,11 @@ import { createPortal } from 'react-dom'
 import { Plus, X } from 'lucide-react'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
+import { useFieldErrors } from '../../hooks/useFieldErrors'
 import PageHeader from '../../components/ui/PageHeader'
 import Button from '../../components/ui/Button'
+import FieldError from '../../components/ui/FieldError'
+import { invalidClass } from '../../utils/fieldStyles'
 import Badge from '@shared/components/ui/Badge'
 import { LoadingState } from '@shared/components/ui/LoadingState'
 import EmptyState from '@shared/components/ui/EmptyState'
@@ -32,6 +35,7 @@ const REFRESH_INTERVAL_MS = 30_000
 // the three seeded offices maps 1:1 to a login role).
 export default function StaffAccounts() {
   const toast = useToast()
+  const { errors, validate, clearError, clearErrors } = useFieldErrors()
   const [staff, setStaff] = useState([])
   const [offices, setOffices] = useState([])
   const [onlineIds, setOnlineIds] = useState(new Set())
@@ -105,9 +109,11 @@ export default function StaffAccounts() {
 
   function updateField(field, value) {
     setForm((current) => ({ ...current, [field]: value }))
+    clearError(field)
   }
 
   function openForm() {
+    clearErrors()
     setForm(EMPTY_FORM)
     setFormOpen(true)
   }
@@ -119,17 +125,22 @@ export default function StaffAccounts() {
   async function handleSubmit(event) {
     event.preventDefault()
 
-    if (form.password.length < 6) {
-      toast.error('Password too short', 'Use at least 6 characters.')
-      return
-    }
-    if (!form.office_id) {
-      toast.error('Office required', 'Select which office this account belongs to.')
+    const email = form.email
+    if (
+      !validate({
+        email: !email.trim()
+          ? 'Email is required.'
+          : !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) && 'Enter a valid email address.',
+        password: !form.password
+          ? 'Password is required.'
+          : form.password.length < 6 && 'Use at least 6 characters.',
+        office_id: !form.office_id && 'Select which office this account belongs to.',
+      })
+    ) {
       return
     }
 
     setSubmitting(true)
-    const email = form.email
 
     const { data, error } = await supabase.functions.invoke('create-staff-account', {
       body: form,
@@ -211,9 +222,15 @@ export default function StaffAccounts() {
                     {!person.is_active ? (
                       <Badge tone="red">Disabled</Badge>
                     ) : onlineIds.has(person.id) ? (
-                      <Badge tone="green">Active</Badge>
+                      <span className="inline-flex items-center gap-1.5 text-xs font-medium text-green-700">
+                        <span className="h-2.5 w-2.5 rounded-full bg-green-500" aria-hidden="true" />
+                        Active
+                      </span>
                     ) : (
-                      <Badge tone="neutral">Inactive</Badge>
+                      <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500">
+                        <span className="h-2.5 w-2.5 rounded-full bg-slate-300" aria-hidden="true" />
+                        Inactive
+                      </span>
                     )}
                   </td>
                 </tr>
@@ -255,44 +272,42 @@ export default function StaffAccounts() {
                 <form onSubmit={handleSubmit} className="space-y-4">
                   <div>
                     <label htmlFor="email" className="mb-1 block text-sm font-medium text-slate-700">
-                      Email
+                      Email *
                     </label>
                     <input
                       ref={firstFieldRef}
                       id="email"
                       type="email"
-                      required
                       value={form.email}
                       onChange={(event) => updateField('email', event.target.value)}
-                      className={inputClass}
+                      className={inputClass + invalidClass(errors.email)}
                     />
+                    <FieldError message={errors.email} />
                   </div>
 
                   <div>
                     <label htmlFor="password" className="mb-1 block text-sm font-medium text-slate-700">
-                      Password
+                      Password *
                     </label>
                     <input
                       id="password"
                       type="password"
-                      required
-                      minLength={6}
                       value={form.password}
                       onChange={(event) => updateField('password', event.target.value)}
-                      className={inputClass}
+                      className={inputClass + invalidClass(errors.password)}
                     />
+                    <FieldError message={errors.password} />
                   </div>
 
                   <div>
                     <label htmlFor="office_id" className="mb-1 block text-sm font-medium text-slate-700">
-                      Office
+                      Office *
                     </label>
                     <select
                       id="office_id"
-                      required
                       value={form.office_id}
                       onChange={(event) => updateField('office_id', event.target.value)}
-                      className={inputClass}
+                      className={inputClass + invalidClass(errors.office_id)}
                     >
                       <option value="">Select an office</option>
                       {offices.map((office) => (
@@ -301,6 +316,7 @@ export default function StaffAccounts() {
                         </option>
                       ))}
                     </select>
+                    <FieldError message={errors.office_id} />
                   </div>
 
                   <div className="flex justify-end gap-2 pt-2">

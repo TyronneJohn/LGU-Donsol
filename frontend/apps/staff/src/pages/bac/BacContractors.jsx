@@ -2,9 +2,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { Building2, Pencil, Plus, Search } from 'lucide-react'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
+import { useFieldErrors } from '../../hooks/useFieldErrors'
 import { useFormDraft, readDraft, clearDraft } from '../../hooks/useFormDraft'
 import PageHeader from '../../components/ui/PageHeader'
 import Button from '../../components/ui/Button'
+import FieldError from '../../components/ui/FieldError'
+import { invalidClass } from '../../utils/fieldStyles'
 import { LoadingState } from '@shared/components/ui/LoadingState'
 import EmptyState from '@shared/components/ui/EmptyState'
 
@@ -22,6 +25,7 @@ const EMPTY_FORM = {
 
 export default function BacContractors() {
   const toast = useToast()
+  const { errors, validate, clearError, clearErrors } = useFieldErrors()
   const [contractors, setContractors] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -66,6 +70,7 @@ export default function BacContractors() {
 
   function updateField(field, value) {
     setForm((current) => ({ ...current, [field]: value }))
+    clearError(field)
   }
 
   function openAddForm() {
@@ -94,6 +99,7 @@ export default function BacContractors() {
   // save alike, and neither leaves anything worth restoring.
   function closeForm() {
     clearDraft(`contractor:${editingId ?? 'new'}`)
+    clearErrors()
     setFormOpen(false)
     setEditingId(null)
     setCleanForm(EMPTY_FORM)
@@ -102,10 +108,7 @@ export default function BacContractors() {
 
   async function handleSubmit(event) {
     event.preventDefault()
-    if (!form.name.trim()) {
-      toast.error('Contractor name is required')
-      return
-    }
+    if (!validate({ name: !form.name.trim() && 'Contractor Name is required.' })) return
 
     setSaving(true)
     const payload = {
@@ -155,7 +158,8 @@ export default function BacContractors() {
             <label htmlFor="name" className="mb-1 block text-sm font-medium text-slate-700">
               Contractor Name *
             </label>
-            <input id="name" required value={form.name} onChange={(e) => updateField('name', e.target.value)} className={inputClass} />
+            <input id="name" value={form.name} onChange={(e) => updateField('name', e.target.value)} className={inputClass + invalidClass(errors.name)} />
+            <FieldError message={errors.name} />
           </div>
           <div className="sm:col-span-2">
             <label htmlFor="business_address" className="mb-1 block text-sm font-medium text-slate-700">

@@ -1,9 +1,14 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Activity, X } from 'lucide-react'
+import { Activity, Search } from 'lucide-react'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
 import PageHeader from '../../components/ui/PageHeader'
+import Pagination from '../../components/ui/Pagination'
+import { usePagination } from '../../hooks/usePagination'
+import SearchInput from '../../components/ui/SearchInput'
+import { matchesProjectSearch } from '../../utils/projectSearch'
+import StatusTabs from '../../components/ui/StatusTabs'
 import Button from '../../components/ui/Button'
 import Badge from '@shared/components/ui/Badge'
 import { LoadingState } from '@shared/components/ui/LoadingState'
@@ -25,27 +30,23 @@ export default function MpdcMonitoring() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [projects, setProjects] = useState([])
   const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
   const statusFilter = searchParams.get('status') ?? ''
 
   async function loadProjects() {
     setLoading(true)
 
-    let query = supabase
+    // Always load the full monitored set; the status tabs (and a dashboard
+    // tile's ?status= link) filter it client-side so every tab has a count.
+    const { data: projectRows, error: projectsError } = await supabase
       .from('projects')
       .select(
         `id, project_code, title, status, end_date_planned, dss_decision, dss_severity,
          offices(name),
          creator:profiles!projects_created_by_fkey(full_name)`,
       )
-      .order('status', { ascending: true })
-      .order('end_date_planned', { ascending: true })
-
-    // A dashboard tile links here with a specific status (already known to
-    // be one of MONITORING_VISIBLE_STATUSES); with no filter, show the full
-    // monitored set as before.
-    query = statusFilter ? query.eq('status', statusFilter) : query.in('status', MONITORING_VISIBLE_STATUSES)
-
-    const { data: projectRows, error: projectsError } = await query
+      .in('status', MONITORING_VISIBLE_STATUSES)
+      .order('updated_at', { ascending: false })
 
     if (projectsError) {
       toast.error('Could not load projects', projectsError.message)
@@ -95,27 +96,37 @@ export default function MpdcMonitoring() {
 
   useEffect(() => {
     loadProjects()
-  }, [statusFilter])
+  }, [])
+
+  const searchedProjects = useMemo(
+    () => projects.filter((project) => matchesProjectSearch(project, search)),
+    [projects, search],
+  )
+  const filteredProjects = statusFilter
+    ? searchedProjects.filter((project) => project.status === statusFilter)
+    : searchedProjects
+
+  function updateStatusFilter(value) {
+    const next = new URLSearchParams(searchParams)
+    if (value) next.set('status', value)
+    else next.delete('status')
+    setSearchParams(next, { replace: true })
+  }
+
+  const pagination = usePagination(filteredProjects, [search, statusFilter])
 
   return (
     <div>
       <PageHeader
         title="Monitoring"
         description="Track implementation progress on approved projects, reported by Engineering."
-        actions={
-          statusFilter ? (
-            <button
-              type="button"
-              onClick={() => setSearchParams(new URLSearchParams())}
-              className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"
-            >
-              {PROJECT_STATUS_LABELS[statusFilter] ?? statusFilter}
-              <X className="h-3.5 w-3.5" aria-hidden="true" />
-            </button>
-          ) : undefined
-        }
         breadcrumbs={[{ label: 'Dashboard', to: '/mpdc' }, { label: 'Monitoring' }]}
       />
+
+      <SearchInput value={search} onChange={setSearch} placeholder="Search by project title, code, or office" />
+      {!loading && projects.length > 0 ? (
+        <StatusTabs projects={searchedProjects} value={statusFilter} onChange={updateStatusFilter} />
+      ) : null}
 
       {loading ? (
         <LoadingState label="Loading projects..." />
@@ -124,6 +135,12 @@ export default function MpdcMonitoring() {
           icon={Activity}
           title="Nothing to monitor yet"
           description="Projects will appear here once they're approved and Engineering begins reporting progress."
+        />
+      ) : filteredProjects.length === 0 ? (
+        <EmptyState
+          icon={Search}
+          title="No matching projects"
+          description="Try a different status tab or search term."
         />
       ) : (
         <div className="overflow-x-auto rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60">
@@ -137,11 +154,11 @@ export default function MpdcMonitoring() {
                 <th className="px-4 py-2.5 font-medium">Progress</th>
                 <th className="px-4 py-2.5 font-medium">Last Update</th>
                 <th className="px-4 py-2.5 font-medium">DSS Decision</th>
-                <th className="px-4 py-2.5 font-medium" />
+                <th className="px-4 py-2.5 text-right font-medium">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {projects.map((project) => (
+              {pagination.pageItems.map((project) => (
                 <tr key={project.id}>
                   <td className="px-4 py-2.5 text-slate-800">{project.project_code ?? '—'}</td>
                   <td className="px-4 py-2.5 text-slate-800">{project.title}</td>
@@ -170,7 +187,7 @@ export default function MpdcMonitoring() {
                   </td>
                   <td className="px-4 py-2.5 text-right">
                     <Button to={`/mpdc/monitoring/${project.id}`} variant="secondary" size="sm">
-                      Open
+                      View
                     </Button>
                   </td>
                 </tr>
@@ -179,6 +196,8 @@ export default function MpdcMonitoring() {
           </table>
         </div>
       )}
+
+      {!loading ? <Pagination {...pagination} /> : null}
     </div>
   )
 }

@@ -6,13 +6,18 @@ import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
 import { useAuth } from '../../hooks/useAuth'
 import { useFormDraft, readDraft } from '../../hooks/useFormDraft'
+import { useFieldErrors } from '../../hooks/useFieldErrors'
+import { useConfirmedBy } from '../../hooks/useConfirmedBy'
 import PageHeader from '../../components/ui/PageHeader'
 import Button from '../../components/ui/Button'
+import FieldError from '../../components/ui/FieldError'
+import { invalidClass } from '../../utils/fieldStyles'
 import Badge from '@shared/components/ui/Badge'
 import { LoadingState } from '@shared/components/ui/LoadingState'
 import EmptyState from '@shared/components/ui/EmptyState'
 import DssPanel from '../../components/ui/DssPanel'
 import LocationModal from '../../components/LocationModal'
+import ConfirmedBySection from '../../components/ConfirmedBySection'
 import SitePhotoGrid from '../../components/ui/SitePhotoGrid'
 import { formatDate } from '@shared/utils/format'
 import {
@@ -281,6 +286,8 @@ export default function ProjectMonitoringDetail() {
   const [submitting, setSubmitting] = useState(false)
   const [cameraOpen, setCameraOpen] = useState(false)
   const [retryingImageId, setRetryingImageId] = useState(null)
+  const { errors, validate, clearError } = useFieldErrors()
+  const confirmedBy = useConfirmedBy()
 
   // A site report typed out on a phone in the field is exactly the input
   // worth not losing to a backgrounded tab. Text fields only: photoQueue
@@ -413,6 +420,7 @@ export default function ProjectMonitoringDetail() {
 
   function updateField(field, value) {
     setForm((current) => ({ ...current, [field]: value }))
+    clearError(field === 'progress_percentage' ? 'progress' : field)
   }
 
   function addPhotos(fileList) {
@@ -435,18 +443,20 @@ export default function ProjectMonitoringDetail() {
   async function handleSubmitUpdate(event) {
     event.preventDefault()
 
-    if (form.progress_percentage === '' || Number(form.progress_percentage) < 0 || Number(form.progress_percentage) > 100) {
-      toast.error('Progress required', 'Enter a progress percentage between 0 and 100.')
+    const progress = Number(form.progress_percentage)
+    if (
+      !validate({
+        progress:
+          (form.progress_percentage === '' || progress < 0 || progress > 100) &&
+          'Enter a progress percentage between 0 and 100.',
+        report_date: !form.report_date
+          ? 'Choose the date this update covers.'
+          : form.report_date > localToday() && 'The report date cannot be in the future.',
+      })
+    ) {
       return
     }
-    if (!form.report_date) {
-      toast.error('Report date required', 'Choose the date this update covers.')
-      return
-    }
-    if (form.report_date > localToday()) {
-      toast.error('Invalid report date', 'The report date cannot be in the future.')
-      return
-    }
+    if (!confirmedBy.require()) return
 
     setSubmitting(true)
     const previousStatus = project.status
@@ -515,6 +525,7 @@ export default function ProjectMonitoringDetail() {
       }
     }
 
+    await confirmedBy.record(project.id, `Submitted a monitoring update (${Number(form.progress_percentage)}% progress)`)
     setForm(EMPTY_FORM)
     setPhotoQueue([])
     setSubmitting(false)
@@ -581,7 +592,7 @@ export default function ProjectMonitoringDetail() {
     <div>
       <PageHeader
         title={project.title}
-        description={project.project_code}
+        description={project.project_code ? `Project Code: ${project.project_code}` : undefined}
         breadcrumbs={[
           { label: 'Dashboard', to: '/engineering' },
           { label: 'Site Monitoring', to: '/engineering/monitoring' },
@@ -623,8 +634,9 @@ export default function ProjectMonitoringDetail() {
                   step="1"
                   value={form.progress_percentage}
                   onChange={(event) => updateField('progress_percentage', event.target.value)}
-                  className={inputClass}
+                  className={inputClass + invalidClass(errors.progress)}
                 />
+                <FieldError message={errors.progress} />
               </div>
 
               <div>
@@ -637,8 +649,9 @@ export default function ProjectMonitoringDetail() {
                   max={localToday()}
                   value={form.report_date}
                   onChange={(event) => updateField('report_date', event.target.value)}
-                  className={inputClass}
+                  className={inputClass + invalidClass(errors.report_date)}
                 />
+                <FieldError message={errors.report_date} />
               </div>
 
               <div className="sm:col-span-2">
@@ -762,6 +775,12 @@ export default function ProjectMonitoringDetail() {
             View History
           </Button>
         </section>
+
+        <ConfirmedBySection
+          projectId={project.id}
+          confirmedBy={editable ? confirmedBy : null}
+          refreshKey={confirmedBy.refreshKey}
+        />
       </div>
 
       <LocationModal open={locationOpen} project={project} onClose={() => setLocationOpen(false)} />

@@ -1,10 +1,15 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { HardHat, X } from 'lucide-react'
+import { HardHat, Search } from 'lucide-react'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
 import { useAuth } from '../../hooks/useAuth'
 import PageHeader from '../../components/ui/PageHeader'
+import Pagination from '../../components/ui/Pagination'
+import { usePagination } from '../../hooks/usePagination'
+import SearchInput from '../../components/ui/SearchInput'
+import { matchesProjectSearch } from '../../utils/projectSearch'
+import StatusTabs from '../../components/ui/StatusTabs'
 import Button from '../../components/ui/Button'
 import Badge from '@shared/components/ui/Badge'
 import { LoadingState } from '@shared/components/ui/LoadingState'
@@ -14,6 +19,7 @@ import {
   PROJECT_STATUS_LABELS,
   PROJECT_STATUS_TONES,
   SITE_MONITORING_VISIBLE_STATUSES,
+  MONITORING_EDITABLE_STATUSES,
 } from '@shared/utils/projectStatus'
 import { DSS_DECISION_LABELS, getDssSeverityTone } from '@shared/utils/decisionSupport'
 
@@ -23,6 +29,7 @@ export default function SiteMonitoring() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [projects, setProjects] = useState([])
   const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
   const statusFilter = searchParams.get('status') ?? ''
 
   async function loadProjects() {
@@ -45,18 +52,14 @@ export default function SiteMonitoring() {
       return
     }
 
-    let query = supabase
+    // Always load the full monitored set; the status tabs (and a dashboard
+    // tile's ?status= link) filter it client-side so every tab has a count.
+    const { data: projectRows, error: projectsError } = await supabase
       .from('projects')
       .select('id, project_code, title, status, end_date_planned, dss_decision, dss_severity')
       .eq('office_id', profile.office_id)
-      .order('created_at', { ascending: false })
-
-    // A dashboard tile links here with a specific status (already known to
-    // be one of SITE_MONITORING_VISIBLE_STATUSES); with no filter, show the
-    // full monitored set as before.
-    query = statusFilter ? query.eq('status', statusFilter) : query.in('status', SITE_MONITORING_VISIBLE_STATUSES)
-
-    const { data: projectRows, error: projectsError } = await query
+      .in('status', SITE_MONITORING_VISIBLE_STATUSES)
+      .order('updated_at', { ascending: false })
 
     if (projectsError) {
       toast.error('Could not load your projects', projectsError.message)
@@ -106,27 +109,37 @@ export default function SiteMonitoring() {
 
   useEffect(() => {
     loadProjects()
-  }, [statusFilter])
+  }, [])
+
+  const searchedProjects = useMemo(
+    () => projects.filter((project) => matchesProjectSearch(project, search)),
+    [projects, search],
+  )
+  const filteredProjects = statusFilter
+    ? searchedProjects.filter((project) => project.status === statusFilter)
+    : searchedProjects
+
+  function updateStatusFilter(value) {
+    const next = new URLSearchParams(searchParams)
+    if (value) next.set('status', value)
+    else next.delete('status')
+    setSearchParams(next, { replace: true })
+  }
+
+  const pagination = usePagination(filteredProjects, [search, statusFilter])
 
   return (
     <div>
       <PageHeader
         title="Site Monitoring"
         description="Report progress, upload site photos, and log issues on approved projects."
-        actions={
-          statusFilter ? (
-            <button
-              type="button"
-              onClick={() => setSearchParams(new URLSearchParams())}
-              className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"
-            >
-              {PROJECT_STATUS_LABELS[statusFilter] ?? statusFilter}
-              <X className="h-3.5 w-3.5" aria-hidden="true" />
-            </button>
-          ) : undefined
-        }
         breadcrumbs={[{ label: 'Dashboard', to: '/engineering' }, { label: 'Site Monitoring' }]}
       />
+
+      <SearchInput value={search} onChange={setSearch} placeholder="Search by project title or code" />
+      {!loading && projects.length > 0 ? (
+        <StatusTabs projects={searchedProjects} value={statusFilter} onChange={updateStatusFilter} />
+      ) : null}
 
       {loading ? (
         <LoadingState label="Loading your projects..." />
@@ -135,6 +148,12 @@ export default function SiteMonitoring() {
           icon={HardHat}
           title="No projects to monitor yet"
           description="Once MPDC approves a project assigned to your office, it will appear here for progress reporting."
+        />
+      ) : filteredProjects.length === 0 ? (
+        <EmptyState
+          icon={Search}
+          title="No matching projects"
+          description="Try a different status tab or search term."
         />
       ) : (
         <div className="overflow-x-auto rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60">
@@ -147,11 +166,11 @@ export default function SiteMonitoring() {
                 <th className="px-4 py-2.5 font-medium">Progress</th>
                 <th className="px-4 py-2.5 font-medium">Last Update</th>
                 <th className="px-4 py-2.5 font-medium">DSS Decision</th>
-                <th className="px-4 py-2.5 font-medium" />
+                <th className="px-4 py-2.5 text-right font-medium">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {projects.map((project) => (
+              {pagination.pageItems.map((project) => (
                 <tr key={project.id}>
                   <td className="px-4 py-2.5 text-slate-800">{project.project_code ?? '—'}</td>
                   <td className="px-4 py-2.5 text-slate-800">{project.title}</td>
@@ -178,9 +197,25 @@ export default function SiteMonitoring() {
                     )}
                   </td>
                   <td className="px-4 py-2.5 text-right">
-                    <Button to={`/engineering/monitoring/${project.id}`} variant="secondary" size="sm">
-                      Open
-                    </Button>
+                    <div className="flex justify-end gap-2">
+                      <Button to={`/engineering/monitoring/${project.id}`} variant="secondary" size="sm">
+                        View
+                      </Button>
+                      {MONITORING_EDITABLE_STATUSES.includes(project.status) ? (
+                        <Button to={`/engineering/monitoring/${project.id}`} variant="secondary" size="sm">
+                          Edit
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          disabled
+                          title="Only For Implementation or Ongoing projects can be updated"
+                        >
+                          Edit
+                        </Button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -188,6 +223,8 @@ export default function SiteMonitoring() {
           </table>
         </div>
       )}
+
+      {!loading ? <Pagination {...pagination} /> : null}
     </div>
   )
 }
