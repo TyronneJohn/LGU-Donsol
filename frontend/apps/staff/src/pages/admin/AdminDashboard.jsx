@@ -6,6 +6,7 @@ import { useAnnualBudget } from '../../hooks/useAnnualBudget'
 import PageHeader from '../../components/ui/PageHeader'
 import Button from '../../components/ui/Button'
 import StatTile from '../../components/ui/StatTile'
+import SavingsTile from '../../components/SavingsTile'
 import SetAnnualBudgetModal from '../../components/ui/SetAnnualBudgetModal'
 import { LoadingState } from '@shared/components/ui/LoadingState'
 import EmptyState from '@shared/components/ui/EmptyState'
@@ -126,6 +127,9 @@ export default function AdminDashboard() {
             <Button variant="secondary" icon={Pencil} onClick={() => setBudgetModalOpen(true)}>
               {budget.ceiling != null ? 'Edit Annual Budget' : 'Set Annual Budget'}
             </Button>
+          </div>
+          <div className="mb-3">
+            <SavingsTile projectLink={(id) => `/admin/projects/${id}`} />
           </div>
           <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
             {STAT_TILES.map((tile) => (

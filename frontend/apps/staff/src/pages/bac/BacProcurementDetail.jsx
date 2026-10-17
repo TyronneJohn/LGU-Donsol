@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { FileWarning, Gavel, MapPin, Pencil, Save, Upload } from 'lucide-react'
+import { CheckCircle2, FileWarning, Gavel, MapPin, Pencil, Save } from 'lucide-react'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
-import { useConfirm } from '../../hooks/useConfirm'
 import { useAuth } from '../../hooks/useAuth'
 import { useFormDraft, readDraft, clearDraft } from '../../hooks/useFormDraft'
 import { useFieldErrors } from '../../hooks/useFieldErrors'
@@ -17,7 +16,7 @@ import Badge from '@shared/components/ui/Badge'
 import { LoadingState } from '@shared/components/ui/LoadingState'
 import EmptyState from '@shared/components/ui/EmptyState'
 import LocationModal from '../../components/LocationModal'
-import ConfirmedBySection from '../../components/ConfirmedBySection'
+import ConfirmNameDialog from '../../components/ConfirmNameDialog'
 import { formatCurrency, formatDate } from '@shared/utils/format'
 import {
   PROJECT_STATUS_LABELS,
@@ -35,6 +34,7 @@ const PROCUREMENT_DOC_CATEGORY_LABELS = {
   INVITATION_TO_BID: 'Invitation to Bid',
   BID_BULLETIN: 'Bid Bulletin',
   ABSTRACT_OF_BIDS: 'Abstract of Bids',
+  BAC_RESOLUTION: 'BAC Resolution',
   NOTICE_OF_AWARD: 'Notice of Award',
   CONTRACT: 'Contract',
   NOTICE_TO_PROCEED: 'Notice to Proceed',
@@ -42,7 +42,23 @@ const PROCUREMENT_DOC_CATEGORY_LABELS = {
   OTHER: 'Other',
 }
 
-const EMPTY_START_FORM = { mode_of_procurement: '', abc_amount: '', bid_opening_date: '' }
+// The two procurement details BAC types in. A restored draft goes through
+// this too, so one saved before the ABC was locked can't carry an ABC back in.
+function procurementDetails(source) {
+  return {
+    mode_of_procurement: source?.mode_of_procurement ?? '',
+    bid_opening_date: source?.bid_opening_date ?? '',
+  }
+}
+
+// The ABC is not BAC's to set: it is Engineering's Program of Works total,
+// which MPDC can only endorse once submitted and which is locked from then on.
+// approved_budget only covers projects endorsed before that gate existed.
+function abcFor(project) {
+  return project?.pow_amount ?? project?.approved_budget ?? null
+}
+
+const EMPTY_START_FORM = procurementDetails(null)
 const EMPTY_CONTRACT_FORM = {
   contract_number: '',
   contract_amount: '',
@@ -51,7 +67,11 @@ const EMPTY_CONTRACT_FORM = {
   contract_duration_days: '',
   expected_completion_date: '',
 }
-const EMPTY_DOC_FORM = { title: '', file: null }
+// The papers an award rests on: the BAC Resolution recommending award and the
+// Notice of Award. Both are required to record one (20261021110000).
+const EMPTY_AWARD_FILES = { resolution: null, notice: null }
+const fileInputClass =
+  'block w-full text-sm text-slate-600 file:mr-3 file:cursor-pointer file:rounded-md file:border file:border-slate-300 file:bg-white file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-50'
 
 // Contract Duration and Expected Completion Date are two views of the same
 // NTP-anchored span — BAC may know either one first (a fixed number of
@@ -97,7 +117,6 @@ function Field({ label, children }) {
 export default function BacProcurementDetail() {
   const { projectId } = useParams()
   const toast = useToast()
-  const confirm = useConfirm()
   const { user } = useAuth()
 
   const [loading, setLoading] = useState(true)
@@ -106,7 +125,7 @@ export default function BacProcurementDetail() {
   const [procurement, setProcurement] = useState(null)
   const [documents, setDocuments] = useState([])
 
-  const [startForm, setStartForm] = useState(() => readDraft(startDraftKey(projectId)) ?? EMPTY_START_FORM)
+  const [startForm, setStartForm] = useState(() => procurementDetails(readDraft(startDraftKey(projectId))))
   const [starting, setStarting] = useState(false)
 
   const [editForm, setEditForm] = useState(EMPTY_START_FORM)
@@ -116,13 +135,20 @@ export default function BacProcurementDetail() {
   const [awardContractorName, setAwardContractorName] = useState('')
   const [awarding, setAwarding] = useState(false)
   const [isEditingAward, setIsEditingAward] = useState(false)
+  const [awardFiles, setAwardFiles] = useState(EMPTY_AWARD_FILES)
+  // Bumped to remount the file inputs, which can't be cleared by value.
+  const [awardFilesKey, setAwardFilesKey] = useState(0)
 
   const [contractForm, setContractForm] = useState(EMPTY_CONTRACT_FORM)
   const [savingContract, setSavingContract] = useState(false)
   const [isEditingContract, setIsEditingContract] = useState(false)
 
-  const [docForm, setDocForm] = useState(EMPTY_DOC_FORM)
   const [uploadingDoc, setUploadingDoc] = useState(false)
+  // Bumped to clear the other-documents file input after each upload.
+  const [otherDocKey, setOtherDocKey] = useState(0)
+  // Which action is waiting on the Confirmed By popup: 'details', 'award',
+  // 'contract' or 'complete'.
+  const [namePrompt, setNamePrompt] = useState(null)
 
   const [technicalDocuments, setTechnicalDocuments] = useState([])
   const [locationOpen, setLocationOpen] = useState(false)
@@ -131,7 +157,6 @@ export default function BacProcurementDetail() {
   const editErrors = useFieldErrors()
   const awardErrors = useFieldErrors()
   const contractErrors = useFieldErrors()
-  const docErrors = useFieldErrors()
   const confirmedBy = useConfirmedBy()
 
   async function loadProcurementDetails(procurementId) {
@@ -212,13 +237,7 @@ export default function BacProcurementDetail() {
 
     if (current) {
       const editDraft = readDraft(editDraftKey(projectId))
-      setEditForm(
-        editDraft ?? {
-          mode_of_procurement: current.mode_of_procurement ?? '',
-          abc_amount: current.abc_amount ?? '',
-          bid_opening_date: current.bid_opening_date ?? '',
-        },
-      )
+      setEditForm(procurementDetails(editDraft ?? current))
       if (editDraft) setIsEditingDetails(true)
 
       setAwardContractorName(current.contractors?.name ?? '')
@@ -238,21 +257,7 @@ export default function BacProcurementDetail() {
 
       await loadProcurementDetails(current.id)
     } else {
-      // Default the ABC to the Program of Works total — under GPPB the ABC
-      // rests on detailed engineering, and the POW is that estimate, so BAC
-      // starting from anything else (or blank) would just be retyping a
-      // number that already exists on the project. MPDC's approved_budget is
-      // the allocation the POW was costed against, not the contract ceiling,
-      // so it is only a fallback for older rows with no POW on file. Still a
-      // normal editable field if BAC has a reason to diverge. A restored
-      // draft (the user's own prior edits) always wins over that default.
-      const startDraft = readDraft(startDraftKey(projectId))
-      setStartForm(
-        startDraft ?? {
-          ...EMPTY_START_FORM,
-          abc_amount: projectData.pow_amount ?? projectData.approved_budget ?? '',
-        },
-      )
+      setStartForm(procurementDetails(readDraft(startDraftKey(projectId))))
       setDocuments([])
     }
 
@@ -269,25 +274,21 @@ export default function BacProcurementDetail() {
   // loadData() finishes restoring never overwrites a real draft.
   //
   // The clean value each is compared against is what the form would hold with
-  // nothing unsaved in it: the ABC default for a procurement not yet started,
-  // and the saved procurement row for the two that edit one. A form matching
+  // nothing unsaved in it: blank for a procurement not yet started, and the
+  // saved procurement row for the two that edit one. A form matching
   // that stores nothing at all, which is also what keeps a blank draft from
   // springing the edit panels open on the next load.
   useFormDraft(
     startDraftKey(projectId),
     startForm,
-    { ...EMPTY_START_FORM, abc_amount: project?.pow_amount ?? project?.approved_budget ?? '' },
+    EMPTY_START_FORM,
     !loading && !procurement,
   )
 
   useFormDraft(
     editDraftKey(projectId),
     editForm,
-    {
-      mode_of_procurement: procurement?.mode_of_procurement ?? '',
-      abc_amount: procurement?.abc_amount ?? '',
-      bid_opening_date: procurement?.bid_opening_date ?? '',
-    },
+    procurementDetails(procurement),
     !loading && isEditingDetails,
   )
 
@@ -320,21 +321,18 @@ export default function BacProcurementDetail() {
     if (
       !startErrors.validate({
         mode: !startForm.mode_of_procurement.trim() && 'Mode of Procurement is required.',
-        abc:
-          (startForm.abc_amount === '' || Number(startForm.abc_amount) <= 0) &&
-          'Enter an ABC greater than zero.',
+        abc: !(Number(abcFor(project)) > 0) && 'This project has no Program of Works amount to use as the ABC.',
       })
     ) {
       return
     }
-    if (!confirmedBy.require()) return
     setStarting(true)
 
     const { error } = await supabase.from('procurement').insert({
       project_id: projectId,
       created_by: user.id,
       mode_of_procurement: startForm.mode_of_procurement || null,
-      abc_amount: startForm.abc_amount === '' ? null : Number(startForm.abc_amount),
+      abc_amount: Number(abcFor(project)),
       bid_opening_date: startForm.bid_opening_date || null,
     })
 
@@ -343,7 +341,6 @@ export default function BacProcurementDetail() {
       toast.error('Could not start procurement', error.message)
       return
     }
-    await confirmedBy.record(projectId, 'Started procurement')
     toast.success('Procurement opened', 'The project has moved to For Procurement.')
     setStartForm(EMPTY_START_FORM)
     clearDraft(startDraftKey(projectId))
@@ -355,20 +352,22 @@ export default function BacProcurementDetail() {
     if (
       !editErrors.validate({
         edit_mode: !String(editForm.mode_of_procurement ?? '').trim() && 'Mode of Procurement is required.',
-        edit_abc:
-          (editForm.abc_amount === '' || Number(editForm.abc_amount) <= 0) && 'Enter an ABC greater than zero.',
       })
     ) {
       return
     }
-    if (!confirmedBy.require()) return
+    setNamePrompt('details')
+  }
+
+  async function saveDetails(confirmedName) {
+    confirmedBy.setName(confirmedName)
+    setNamePrompt(null)
     setSavingDetails(true)
 
     const { error } = await supabase
       .from('procurement')
       .update({
         mode_of_procurement: editForm.mode_of_procurement || null,
-        abc_amount: editForm.abc_amount === '' ? null : Number(editForm.abc_amount),
         bid_opening_date: editForm.bid_opening_date || null,
       })
       .eq('id', procurement.id)
@@ -378,7 +377,7 @@ export default function BacProcurementDetail() {
       toast.error('Could not save procurement details', error.message)
       return
     }
-    await confirmedBy.record(projectId, 'Updated the procurement details')
+    await confirmedBy.record(projectId, 'Updated the procurement details', confirmedName)
     toast.success('Procurement details saved')
     setIsEditingDetails(false)
     clearDraft(editDraftKey(projectId))
@@ -387,35 +386,40 @@ export default function BacProcurementDetail() {
 
   function handleCancelEditDetails() {
     if (procurement) {
-      setEditForm({
-        mode_of_procurement: procurement.mode_of_procurement ?? '',
-        abc_amount: procurement.abc_amount ?? '',
-        bid_opening_date: procurement.bid_opening_date ?? '',
-      })
+      setEditForm(procurementDetails(procurement))
     }
     setIsEditingDetails(false)
     editErrors.clearErrors()
     clearDraft(editDraftKey(projectId))
   }
 
-  async function handleRecordAward() {
-    const name = awardContractorName.trim().replace(/\s+/g, ' ')
+  function awardWinnerName() {
+    return awardContractorName.trim().replace(/\s+/g, ' ')
+  }
+
+  function resetAwardFiles() {
+    setAwardFiles(EMPTY_AWARD_FILES)
+    setAwardFilesKey((key) => key + 1)
+  }
+
+  function handleRecordAward() {
+    const name = awardWinnerName()
     if (
       !awardErrors.validate({
         award_contractor: !name && 'Type the contractor or company name before recording the award.',
+        award_resolution: !awardFiles.resolution && 'Attach the BAC Resolution recommending award.',
+        award_notice: !awardFiles.notice && 'Attach the Notice of Award.',
       })
     ) {
       return
     }
-    if (!confirmedBy.require()) return
+    setNamePrompt('award')
+  }
 
-    const confirmed = await confirm({
-      title: 'Record this award?',
-      description: `This sets ${name} as the winning bidder for the procurement cycle.`,
-      confirmLabel: 'Record Award',
-    })
-    if (!confirmed) return
-
+  async function recordAward(confirmedName) {
+    confirmedBy.setName(confirmedName)
+    setNamePrompt(null)
+    const name = awardWinnerName()
     setAwarding(true)
 
     // BAC now just types the winning bidder's name, but procurement still
@@ -450,6 +454,16 @@ export default function BacProcurementDetail() {
       contractorId = created.id
     }
 
+    // The papers go up first: the database refuses an award without them.
+    if (
+      !(await uploadProcurementDocument(awardFiles.resolution, `BAC Resolution — ${name}`, 'BAC_RESOLUTION')) ||
+      !(await uploadProcurementDocument(awardFiles.notice, `Notice of Award — ${name}`, 'NOTICE_OF_AWARD'))
+    ) {
+      setAwarding(false)
+      loadProcurementDetails(procurement.id)
+      return
+    }
+
     const nextStatus = ['NOT_STARTED', 'BIDDING', 'BID_EVALUATION'].includes(procurement.status)
       ? 'AWARDED'
       : procurement.status
@@ -462,11 +476,13 @@ export default function BacProcurementDetail() {
     setAwarding(false)
     if (error) {
       toast.error('Could not record award', error.message)
+      loadProcurementDetails(procurement.id)
       return
     }
-    await confirmedBy.record(projectId, `Recorded the award to ${name}`)
+    await confirmedBy.record(projectId, `Recorded the award to ${name}`, confirmedName)
     toast.success('Award recorded', 'MPDC has been notified.')
     setIsEditingAward(false)
+    resetAwardFiles()
     loadData()
   }
 
@@ -476,13 +492,21 @@ export default function BacProcurementDetail() {
       !contractErrors.validate({
         contract_number: !contractForm.contract_number.trim() && 'Contract Number is required.',
         contract_amount:
-          (contractForm.contract_amount === '' || Number(contractForm.contract_amount) <= 0) &&
-          'Enter a contract amount greater than zero.',
+          contractForm.contract_amount === '' || Number(contractForm.contract_amount) <= 0
+            ? 'Enter a contract amount greater than zero.'
+            : procurement.abc_amount != null && Number(contractForm.contract_amount) > Number(procurement.abc_amount)
+              ? `Contract amount cannot exceed the ABC (${formatCurrency(procurement.abc_amount)}).`
+              : false,
       })
     ) {
       return
     }
-    if (!confirmedBy.require()) return
+    setNamePrompt('contract')
+  }
+
+  async function saveContract(confirmedName) {
+    confirmedBy.setName(confirmedName)
+    setNamePrompt(null)
     setSavingContract(true)
 
     const payload = {
@@ -506,7 +530,7 @@ export default function BacProcurementDetail() {
       toast.error('Could not save contract', error.message)
       return
     }
-    await confirmedBy.record(projectId, 'Saved the contract details')
+    await confirmedBy.record(projectId, 'Saved the contract details', confirmedName)
     toast.success(
       'Contract saved',
       payload.status === 'CONTRACT_SIGNED' ? 'Project moved to For Implementation.' : undefined,
@@ -532,65 +556,58 @@ export default function BacProcurementDetail() {
     clearDraft(contractDraftKey(projectId))
   }
 
-  async function handleMarkCompleted() {
-    if (!confirmedBy.require()) return
-
-    const confirmed = await confirm({
-      title: 'Mark procurement as completed?',
-      description: 'This closes out BAC paperwork for this cycle. It does not affect the project implementation status.',
-      confirmLabel: 'Mark Completed',
-    })
-    if (!confirmed) return
+  async function markCompleted(confirmedName) {
+    confirmedBy.setName(confirmedName)
+    setNamePrompt(null)
 
     const { error } = await supabase.from('procurement').update({ status: 'COMPLETED' }).eq('id', procurement.id)
     if (error) {
       toast.error('Could not mark completed', error.message)
       return
     }
-    await confirmedBy.record(projectId, 'Marked procurement as completed')
+    await confirmedBy.record(projectId, 'Marked procurement as completed', confirmedName)
     toast.success('Procurement marked completed')
     loadData()
   }
 
-  async function handleUploadDocument(event) {
-    event.preventDefault()
-    if (
-      !docErrors.validate({
-        doc_title: !docForm.title.trim() && 'Enter a title for this document.',
-        doc_file: !docForm.file && 'Select a file to upload.',
-      })
-    ) {
-      return
-    }
-
-    if (!confirmedBy.require()) return
-    setUploadingDoc(true)
-    const path = `${procurement.id}/${crypto.randomUUID()}-${docForm.file.name}`
+  // Stores the file and records it against the current procurement. Toasts
+  // its own error and returns false on failure.
+  async function uploadProcurementDocument(file, title, category = 'OTHER') {
+    const path = `${procurement.id}/${crypto.randomUUID()}-${file.name}`
 
     const { error: uploadError } = await supabase.storage
       .from('procurement-documents')
-      .upload(path, docForm.file, { contentType: docForm.file.type || undefined })
+      .upload(path, file, { contentType: file.type || undefined })
     if (uploadError) {
       toast.error('Could not upload file', uploadError.message)
-      setUploadingDoc(false)
-      return
+      return false
     }
 
     const { error: insertError } = await supabase.from('procurement_documents').insert({
       procurement_id: procurement.id,
       uploaded_by: user.id,
-      title: docForm.title.trim(),
+      document_category: category,
+      title,
       storage_path: path,
-      file_name: docForm.file.name,
+      file_name: file.name,
     })
-
-    setUploadingDoc(false)
     if (insertError) {
       toast.error('Could not record document', insertError.message)
-      return
+      return false
     }
-    setDocForm(EMPTY_DOC_FORM)
-    await confirmedBy.record(projectId, 'Uploaded a procurement document')
+    return true
+  }
+
+  // Other (optional) documents upload as soon as a file is picked, titled by
+  // their file name.
+  async function handleUploadOtherDocument(event) {
+    const file = event.target.files?.[0]
+    if (!file) return
+    setUploadingDoc(true)
+    const uploaded = await uploadProcurementDocument(file, file.name)
+    setUploadingDoc(false)
+    setOtherDocKey((key) => key + 1)
+    if (!uploaded) return
     toast.success('Document uploaded')
     loadProcurementDetails(procurement.id)
   }
@@ -632,6 +649,18 @@ export default function BacProcurementDetail() {
   }
 
   const hasSavedContract = contractAlreadySaved
+  // Flagged as soon as it's typed, not only on Save: the ABC is the ceiling.
+  const contractExceedsAbc =
+    procurement?.abc_amount != null &&
+    contractForm.contract_amount !== '' &&
+    Number(contractForm.contract_amount) > Number(procurement.abc_amount)
+  // The award's papers show under the Winning Bidder, not in Other Documents.
+  // documents is newest first, so a re-award shows its latest papers.
+  const AWARD_DOC_CATEGORIES = ['BAC_RESOLUTION', 'NOTICE_OF_AWARD']
+  const awardDocuments = AWARD_DOC_CATEGORIES.map((category) =>
+    documents.find((doc) => doc.document_category === category),
+  ).filter(Boolean)
+  const otherDocuments = documents.filter((doc) => !AWARD_DOC_CATEGORIES.includes(doc.document_category))
   const canEditAward = !['CONTRACT_SIGNED', 'COMPLETED'].includes(procurement?.status)
 
   return (
@@ -744,28 +773,16 @@ export default function BacProcurementDetail() {
                 <FieldError message={startErrors.errors.mode} />
               </div>
               <div>
-                <label htmlFor="abc" className="mb-1 block text-sm font-medium text-slate-700">
-                  Approved Budget for the Contract (ABC) *
-                </label>
-                <CurrencyInput
-                  id="abc"
-                  value={startForm.abc_amount}
-                  onChange={(value) => {
-                    setStartForm((f) => ({ ...f, abc_amount: value }))
-                    startErrors.clearError('abc')
-                  }}
-                  className={inputClass + invalidClass(startErrors.errors.abc)}
-                />
+                <p className="mb-1 block text-sm font-medium text-slate-700">Approved Budget for the Contract (ABC)</p>
+                <p className={inputClass + ' bg-slate-100 text-slate-700' + invalidClass(startErrors.errors.abc)}>
+                  {formatCurrency(abcFor(project))}
+                </p>
                 <FieldError message={startErrors.errors.abc} />
-                {project.pow_amount != null ? (
-                  <p className="mt-1 text-xs text-slate-400">
-                    Defaulted to Engineering's Program of Works — adjust if needed.
-                  </p>
-                ) : project.approved_budget != null ? (
-                  <p className="mt-1 text-xs text-slate-400">
-                    No Program of Works on file — defaulted to MPDC's allocation. Adjust if needed.
-                  </p>
-                ) : null}
+                <p className="mt-1 text-xs text-slate-400">
+                  {project.pow_amount != null
+                    ? "From Engineering's Program of Works — not editable."
+                    : "No Program of Works on file — taken from MPDC's allocation. Not editable."}
+                </p>
               </div>
               <div>
                 <label htmlFor="bid_opening" className="mb-1 block text-sm font-medium text-slate-700">
@@ -824,19 +841,11 @@ export default function BacProcurementDetail() {
                       <FieldError message={editErrors.errors.edit_mode} />
                     </div>
                     <div>
-                      <label htmlFor="edit_abc" className="mb-1 block text-sm font-medium text-slate-700">
-                        ABC *
-                      </label>
-                      <CurrencyInput
-                        id="edit_abc"
-                        value={editForm.abc_amount}
-                        onChange={(value) => {
-                          setEditForm((f) => ({ ...f, abc_amount: value }))
-                          editErrors.clearError('edit_abc')
-                        }}
-                        className={inputClass + invalidClass(editErrors.errors.edit_abc)}
-                      />
-                      <FieldError message={editErrors.errors.edit_abc} />
+                      <p className="mb-1 block text-sm font-medium text-slate-700">ABC</p>
+                      <p className={inputClass + ' bg-slate-100 text-slate-700'}>
+                        {formatCurrency(procurement.abc_amount)}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-400">From the Program of Works — not editable.</p>
                     </div>
                     <div>
                       <label htmlFor="edit_bid_opening" className="mb-1 block text-sm font-medium text-slate-700">
@@ -874,23 +883,48 @@ export default function BacProcurementDetail() {
 
               <div className="mt-4">
                 {procurement.contractor_id && !isEditingAward ? (
-                  <div className="flex flex-wrap items-center gap-3">
-                    <Field label="Winning Bidder">{procurement.contractors?.name}</Field>
-                    {canEditAward ? (
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        icon={Pencil}
-                        onClick={() => setIsEditingAward(true)}
-                      >
-                        Edit
-                      </Button>
+                  <div>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <Field label="Winning Bidder">{procurement.contractors?.name}</Field>
+                      {canEditAward ? (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          icon={Pencil}
+                          onClick={() => setIsEditingAward(true)}
+                        >
+                          Edit
+                        </Button>
+                      ) : null}
+                    </div>
+                    {awardDocuments.length > 0 ? (
+                      <>
+                        <h3 className="mt-5 text-sm font-semibold text-slate-800">Award Documents</h3>
+                        <ul className="mt-2 divide-y divide-slate-100">
+                          {awardDocuments.map((doc) => (
+                            <li key={doc.id} className="flex items-center justify-between gap-3 py-2.5">
+                              <div>
+                                <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+                                  {PROCUREMENT_DOC_CATEGORY_LABELS[doc.document_category]}
+                                </p>
+                                <p className="mt-0.5 text-sm text-slate-800">{doc.file_name ?? doc.title}</p>
+                                <p className="text-xs text-slate-500">
+                                  uploaded by {doc.uploader?.full_name ?? '—'} · {formatDate(doc.created_at)}
+                                </p>
+                              </div>
+                              <Button variant="ghost" size="sm" onClick={() => handleViewDocument(doc)}>
+                                View
+                              </Button>
+                            </li>
+                          ))}
+                        </ul>
+                      </>
                     ) : null}
                   </div>
                 ) : (
-                  <div className="flex flex-wrap items-start gap-3">
-                    <div className="min-w-55">
+                  <div className="space-y-4">
+                    <div className="max-w-md">
                       <label htmlFor="award_contractor" className="mb-1 block text-sm font-medium text-slate-700">
                         Winning Bidder *
                       </label>
@@ -906,34 +940,69 @@ export default function BacProcurementDetail() {
                       />
                       <FieldError message={awardErrors.errors.award_contractor} />
                     </div>
-                    <Button
-                      type="button"
-                      icon={Gavel}
-                      loading={awarding}
-                      disabled={
-                        Boolean(awardContractorName.trim()) &&
-                        awardContractorName.trim() === (procurement.contractors?.name ?? '')
-                      }
-                      onClick={handleRecordAward}
-                      className="mt-6"
-                    >
-                      Record Award
-                    </Button>
-                    {procurement.contractor_id ? (
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div>
+                        <label htmlFor="award_resolution" className="mb-1 block text-sm font-medium text-slate-700">
+                          BAC Resolution (Recommending Award) *
+                        </label>
+                        <input
+                          key={`resolution-${awardFilesKey}`}
+                          id="award_resolution"
+                          type="file"
+                          onChange={(event) => {
+                            setAwardFiles((f) => ({ ...f, resolution: event.target.files?.[0] ?? null }))
+                            awardErrors.clearError('award_resolution')
+                          }}
+                          className={fileInputClass + invalidFileClass(awardErrors.errors.award_resolution)}
+                        />
+                        <FieldError message={awardErrors.errors.award_resolution} />
+                      </div>
+                      <div>
+                        <label htmlFor="award_notice" className="mb-1 block text-sm font-medium text-slate-700">
+                          Notice of Award *
+                        </label>
+                        <input
+                          key={`notice-${awardFilesKey}`}
+                          id="award_notice"
+                          type="file"
+                          onChange={(event) => {
+                            setAwardFiles((f) => ({ ...f, notice: event.target.files?.[0] ?? null }))
+                            awardErrors.clearError('award_notice')
+                          }}
+                          className={fileInputClass + invalidFileClass(awardErrors.errors.award_notice)}
+                        />
+                        <FieldError message={awardErrors.errors.award_notice} />
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3">
                       <Button
                         type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="mt-6"
-                        onClick={() => {
-                          setAwardContractorName(procurement.contractors?.name ?? '')
-                          awardErrors.clearErrors()
-                          setIsEditingAward(false)
-                        }}
+                        icon={Gavel}
+                        loading={awarding}
+                        disabled={
+                          Boolean(awardContractorName.trim()) &&
+                          awardContractorName.trim() === (procurement.contractors?.name ?? '')
+                        }
+                        onClick={handleRecordAward}
                       >
-                        Cancel
+                        Record Award
                       </Button>
-                    ) : null}
+                      {procurement.contractor_id ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setAwardContractorName(procurement.contractors?.name ?? '')
+                            awardErrors.clearErrors()
+                            resetAwardFiles()
+                            setIsEditingAward(false)
+                          }}
+                        >
+                          Cancel
+                        </Button>
+                      ) : null}
+                    </div>
                   </div>
                 )}
               </div>
@@ -995,9 +1064,22 @@ export default function BacProcurementDetail() {
                               setContractForm((f) => ({ ...f, contract_amount: value }))
                               contractErrors.clearError('contract_amount')
                             }}
-                            className={inputClass + invalidClass(contractErrors.errors.contract_amount)}
+                            className={
+                              inputClass + invalidClass(contractErrors.errors.contract_amount || contractExceedsAbc)
+                            }
                           />
-                          <FieldError message={contractErrors.errors.contract_amount} />
+                          <FieldError
+                            message={
+                              contractExceedsAbc
+                                ? `Contract amount cannot exceed the ABC (${formatCurrency(procurement.abc_amount)}).`
+                                : contractErrors.errors.contract_amount
+                            }
+                          />
+                          {procurement.abc_amount != null && !contractExceedsAbc ? (
+                            <p className="mt-1 text-xs text-slate-400">
+                              Must not exceed the ABC of {formatCurrency(procurement.abc_amount)}.
+                            </p>
+                          ) : null}
                         </div>
                         <div>
                           <label
@@ -1111,7 +1193,13 @@ export default function BacProcurementDetail() {
                         Implementation.
                       </p>
                       <div className="mt-3 flex flex-wrap items-center gap-3">
-                        <Button type="submit" size="sm" icon={Save} loading={savingContract}>
+                        <Button
+                          type="submit"
+                          size="sm"
+                          icon={Save}
+                          loading={savingContract}
+                          disabled={contractExceedsAbc}
+                        >
                           Save Contract
                         </Button>
                         {hasSavedContract ? (
@@ -1125,7 +1213,7 @@ export default function BacProcurementDetail() {
 
                   {procurement.status === 'CONTRACT_SIGNED' ? (
                     <div className="mt-3">
-                      <Button type="button" variant="secondary" size="sm" onClick={handleMarkCompleted}>
+                      <Button type="button" icon={CheckCircle2} onClick={() => setNamePrompt('complete')}>
                         Mark Procurement Completed
                       </Button>
                     </div>
@@ -1135,13 +1223,13 @@ export default function BacProcurementDetail() {
             </section>
 
             <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
-              <h2 className="text-sm font-semibold text-slate-800">Procurement Documents</h2>
+              <h2 className="text-sm font-semibold text-slate-800">Other Documents (Optional)</h2>
 
-              {documents.length === 0 ? (
+              {otherDocuments.length === 0 ? (
                 <p className="mt-2 text-sm text-slate-500">No documents uploaded yet.</p>
               ) : (
                 <ul className="mt-4 divide-y divide-slate-100">
-                  {documents.map((doc) => (
+                  {otherDocuments.map((doc) => (
                     <li key={doc.id} className="flex items-center justify-between gap-3 py-2.5">
                       <div>
                         <p className="text-sm text-slate-800">{doc.title}</p>
@@ -1158,54 +1246,82 @@ export default function BacProcurementDetail() {
                 </ul>
               )}
 
-              <form
-                onSubmit={handleUploadDocument}
-                className="mt-4 grid gap-3 rounded-md border border-slate-200 bg-slate-50 p-4 sm:grid-cols-2"
-              >
-                <div>
-                  <label htmlFor="doc_title" className="mb-1 block text-sm font-medium text-slate-700">
-                    Title *
-                  </label>
-                  <input
-                    id="doc_title"
-                    value={docForm.title}
-                    onChange={(event) => {
-                      setDocForm((f) => ({ ...f, title: event.target.value }))
-                      docErrors.clearError('doc_title')
-                    }}
-                    className={inputClass + invalidClass(docErrors.errors.doc_title)}
-                  />
-                  <FieldError message={docErrors.errors.doc_title} />
-                </div>
-                <div>
-                  <label htmlFor="doc_file" className="mb-1 block text-sm font-medium text-slate-700">
-                    File *
-                  </label>
-                  <input
-                    id="doc_file"
-                    type="file"
-                    onChange={(event) => {
-                      setDocForm((f) => ({ ...f, file: event.target.files?.[0] ?? null }))
-                      docErrors.clearError('doc_file')
-                    }}
-                    className={`block w-full text-sm text-slate-600 file:mr-3 file:cursor-pointer file:rounded-md file:border file:border-slate-300 file:bg-white file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-50${invalidFileClass(docErrors.errors.doc_file)}`}
-                  />
-                  <FieldError message={docErrors.errors.doc_file} />
-                </div>
-                <div className="sm:col-span-2">
-                  <Button type="submit" variant="secondary" size="sm" icon={Upload} loading={uploadingDoc}>
-                    Upload
-                  </Button>
-                </div>
-              </form>
+              <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-4">
+                <input
+                  aria-label="Upload other document"
+                  key={`other-doc-${otherDocKey}`}
+                  id="other_doc_file"
+                  type="file"
+                  disabled={uploadingDoc}
+                  onChange={handleUploadOtherDocument}
+                  className={fileInputClass}
+                />
+                <p className="mt-1 text-xs text-slate-400">
+                  {uploadingDoc ? 'Uploading…' : 'Uploads as soon as you choose a file.'}
+                </p>
+              </div>
             </section>
           </>
         )}
-
-        <ConfirmedBySection projectId={projectId} confirmedBy={confirmedBy} refreshKey={confirmedBy.refreshKey} />
       </div>
 
       <LocationModal open={locationOpen} project={project} onClose={() => setLocationOpen(false)} />
+
+      {namePrompt === 'details' ? (
+        <ConfirmNameDialog
+          title="Save procurement details?"
+          description="Your name is recorded as Confirmed By for this update."
+          label="Confirmed By (Your Full Name)"
+          confirmLabel="Save Details"
+          confirmIcon={Save}
+          initialName={confirmedBy.name}
+          onConfirm={saveDetails}
+          onCancel={() => setNamePrompt(null)}
+        />
+      ) : null}
+
+      {namePrompt === 'award' ? (
+        <ConfirmNameDialog
+          title="Record this award?"
+          description={`This sets ${awardWinnerName()} as the winning bidder and uploads the BAC Resolution and Notice of Award. Your name is recorded as Confirmed By.`}
+          label="Confirmed By (Your Full Name)"
+          confirmLabel="Record Award"
+          confirmIcon={Gavel}
+          initialName={confirmedBy.name}
+          onConfirm={recordAward}
+          onCancel={() => setNamePrompt(null)}
+        />
+      ) : null}
+
+      {namePrompt === 'contract' ? (
+        <ConfirmNameDialog
+          title="Save contract details?"
+          description={
+            contractForm.contract_signed_date
+              ? 'With a signing date, the project moves to For Implementation. Your name is recorded as Confirmed By.'
+              : 'Your name is recorded as Confirmed By for this update.'
+          }
+          label="Confirmed By (Your Full Name)"
+          confirmLabel="Save Contract"
+          confirmIcon={Save}
+          initialName={confirmedBy.name}
+          onConfirm={saveContract}
+          onCancel={() => setNamePrompt(null)}
+        />
+      ) : null}
+
+      {namePrompt === 'complete' ? (
+        <ConfirmNameDialog
+          title="Mark procurement as completed?"
+          description="This closes out BAC paperwork for this cycle. It does not affect the project implementation status. Your name is recorded as Confirmed By."
+          label="Confirmed By (Your Full Name)"
+          confirmLabel="Mark Completed"
+          confirmIcon={CheckCircle2}
+          initialName={confirmedBy.name}
+          onConfirm={markCompleted}
+          onCancel={() => setNamePrompt(null)}
+        />
+      ) : null}
     </div>
   )
 }

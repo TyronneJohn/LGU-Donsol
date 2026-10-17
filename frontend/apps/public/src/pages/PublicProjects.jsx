@@ -1,11 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowLeft,
-  Camera,
   ChevronLeft,
   ChevronRight,
   ClipboardList,
+  FileSpreadsheet,
   FolderKanban,
   Landmark,
   MapPin,
@@ -26,6 +24,9 @@ import Badge from '@shared/components/ui/Badge'
 import { LoadingState } from '@shared/components/ui/LoadingState'
 import EmptyState from '@shared/components/ui/EmptyState'
 import ProjectMap from '@shared/components/ProjectMap'
+import PowBreakdown from '@shared/components/PowBreakdown'
+import PinPhotoGallery from '@shared/components/PinPhotoGallery'
+import PhotoViewerDialog from '@shared/components/PhotoViewerDialog'
 import { isWithinDonsol } from '@shared/utils/geo'
 
 // Public rows can only exist from APPROVED onward (MPDC publishes while
@@ -44,8 +45,24 @@ const SECTOR_GROUPS = [
   { key: null, label: 'Other Projects' },
 ]
 
+const PAGE_SIZE = 15
+
 function budgetOf(project) {
   return Number(project.approved_budget ?? project.estimated_cost ?? 0)
+}
+
+// Page numbers to show around the current page, with null marking a gap
+// (rendered as "…"), e.g. 1 … 4 5 6 … 12.
+function pageNumbers(current, total) {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1)
+  const pages = [1]
+  const from = Math.max(2, current - 1)
+  const to = Math.min(total - 1, current + 1)
+  if (from > 2) pages.push(null)
+  for (let p = from; p <= to; p += 1) pages.push(p)
+  if (to < total - 1) pages.push(null)
+  pages.push(total)
+  return pages
 }
 
 export default function PublicProjects() {
@@ -56,6 +73,8 @@ export default function PublicProjects() {
   const [sectorFilter, setSectorFilter] = useState('ALL')
   const [barangayFilter, setBarangayFilter] = useState('ALL')
   const [selected, setSelected] = useState(null)
+  const [page, setPage] = useState(1)
+  const listTopRef = useRef(null)
 
   useEffect(() => {
     async function loadProjects() {
@@ -106,7 +125,40 @@ export default function PublicProjects() {
     [filtered],
   )
 
-  const grandTotal = useMemo(() => filtered.reduce((sum, p) => sum + budgetOf(p), 0), [filtered])
+  // Pages run through the projects in board order (sector A, B, C, then
+  // Other). Group subtotals still cover every filtered project in the
+  // sector, not just the ones on the current page.
+  const totalProjects = groups.reduce((sum, group) => sum + group.projects.length, 0)
+  const pageCount = Math.max(1, Math.ceil(totalProjects / PAGE_SIZE))
+  const currentPage = Math.min(page, pageCount)
+  const pageStart = (currentPage - 1) * PAGE_SIZE
+  const pageEnd = Math.min(pageStart + PAGE_SIZE, totalProjects)
+
+  const pageGroups = useMemo(() => {
+    let offset = 0
+    return groups
+      .map((group) => {
+        const groupStart = offset
+        offset += group.projects.length
+        return {
+          ...group,
+          pageProjects: group.projects.slice(
+            Math.max(0, pageStart - groupStart),
+            Math.max(0, pageEnd - groupStart),
+          ),
+        }
+      })
+      .filter((group) => group.pageProjects.length > 0)
+  }, [groups, pageStart, pageEnd])
+
+  useEffect(() => {
+    setPage(1)
+  }, [search, statusFilter, sectorFilter, barangayFilter])
+
+  function goToPage(next) {
+    setPage(next)
+    listTopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
 
   return (
     <div>
@@ -174,7 +226,7 @@ export default function PublicProjects() {
           ) : null}
         </div>
 
-        <div className="mt-6">
+        <div ref={listTopRef} className="mt-6 scroll-mt-4">
           {loading ? (
             <div className="rounded-xl border border-slate-200/70 bg-white shadow-lg shadow-blue-950/10">
               <LoadingState label="Loading published projects..." />
@@ -201,14 +253,14 @@ export default function PublicProjects() {
               {/* Below laptop width, one card per project — nine table columns can't fit
                   a phone or tablet screen without sideways scrolling. */}
               <div className="space-y-5 lg:hidden">
-                {groups.map((group) => (
+                {pageGroups.map((group) => (
                   <section key={group.key ?? 'other'}>
                     <div className="mb-2 flex items-baseline justify-between gap-3 rounded-lg bg-white/95 px-3 py-2 shadow-sm">
                       <h2 className="text-sm font-semibold text-blue-900">{group.label}</h2>
                       <p className="text-sm font-semibold tabular-nums text-slate-700">{formatCurrency(group.subtotal)}</p>
                     </div>
                     <ul className="grid gap-3 sm:grid-cols-2">
-                      {group.projects.map((project) => (
+                      {group.pageProjects.map((project) => (
                         <li key={project.id}>
                           <button
                             type="button"
@@ -253,15 +305,31 @@ export default function PublicProjects() {
                     </ul>
                   </section>
                 ))}
-                <div className="flex items-baseline justify-between gap-3 rounded-lg bg-blue-900 px-3 py-2.5 text-white shadow-sm">
-                  <p className="text-sm font-semibold uppercase tracking-wide">Total</p>
-                  <p className="text-sm font-semibold tabular-nums">{formatCurrency(grandTotal)}</p>
-                </div>
+                <Pagination
+                  className="rounded-lg bg-blue-900 px-3 py-2.5 shadow-sm"
+                  page={currentPage}
+                  pageCount={pageCount}
+                  start={pageStart + 1}
+                  end={pageEnd}
+                  total={totalProjects}
+                  onChange={goToPage}
+                />
               </div>
 
               <div className="hidden overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm lg:block">
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm">
+                  {/* Fixed layout so column widths stay put when the page or
+                      filters change; Project takes whatever width is left. */}
+                  <table className="w-full table-fixed text-left text-sm">
+                    <colgroup>
+                      <col />
+                      <col className="w-32" />
+                      <col className="w-36" />
+                      <col className="w-36" />
+                      <col className="w-56" />
+                      <col className="w-40" />
+                      <col className="w-10" />
+                    </colgroup>
                     <thead className="bg-linear-to-r from-blue-800 to-blue-600">
                       <tr className="divide-x divide-white/20">
                         <th scope="col" className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-white/90">Project</th>
@@ -273,7 +341,7 @@ export default function PublicProjects() {
                         <th scope="col" className="w-10 px-2 py-3"><span className="sr-only">Open</span></th>
                       </tr>
                     </thead>
-                    {groups.map((group) => (
+                    {pageGroups.map((group) => (
                     <tbody key={group.key ?? 'other'} className="divide-y divide-slate-300 border-t border-slate-300">
                       <tr className="bg-blue-50">
                         <th scope="colgroup" colSpan={2} className="px-4 py-2 text-left text-sm font-semibold text-blue-900">
@@ -286,7 +354,7 @@ export default function PublicProjects() {
                           {group.projects.length} {group.projects.length === 1 ? 'project' : 'projects'}
                         </td>
                       </tr>
-                      {group.projects.map((project) => (
+                      {group.pageProjects.map((project) => (
                         <tr
                           key={project.id}
                           tabIndex={0}
@@ -300,14 +368,14 @@ export default function PublicProjects() {
                           className="group cursor-pointer divide-x divide-slate-300 transition-colors hover:bg-blue-50/50 focus:bg-blue-50/50 focus:outline-none"
                         >
                           <td className="px-4 py-3">
-                            <p className="font-medium text-slate-800 group-hover:text-blue-700">{project.title}</p>
-                            <p className="mt-0.5 text-xs text-slate-400">{project.project_code}</p>
+                            <p className="font-medium wrap-break-word text-slate-800 group-hover:text-blue-700">{project.title}</p>
+                            <p className="mt-0.5 text-xs wrap-break-word text-slate-400">{project.project_code}</p>
                           </td>
-                          <td className="px-4 py-3 text-slate-600">{project.barangay || '—'}</td>
+                          <td className="px-4 py-3 wrap-break-word text-slate-600">{project.barangay || '—'}</td>
                           <td className="px-4 py-3 whitespace-nowrap text-right font-medium tabular-nums text-slate-700">
                             {formatCurrency(project.approved_budget ?? project.estimated_cost)}
                           </td>
-                          <td className="px-4 py-3 text-slate-600">{project.funding_source || '—'}</td>
+                          <td className="px-4 py-3 wrap-break-word text-slate-600">{project.funding_source || '—'}</td>
                           <td className="px-4 py-3 whitespace-nowrap text-slate-600">
                             <p>
                               {formatDate(project.start_date_planned)}
@@ -327,19 +395,17 @@ export default function PublicProjects() {
                       ))}
                     </tbody>
                     ))}
-                    <tfoot className="border-t-2 border-blue-800 bg-blue-900 text-white">
-                      <tr>
-                        <th scope="row" colSpan={2} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide">
-                          Total
-                        </th>
-                        <td className="px-4 py-3 whitespace-nowrap text-right font-semibold tabular-nums">
-                          {formatCurrency(grandTotal)}
-                        </td>
-                        <td colSpan={4} />
-                      </tr>
-                    </tfoot>
                   </table>
                 </div>
+                <Pagination
+                  className="border-t-2 border-blue-800 bg-blue-900 px-4 py-3"
+                  page={currentPage}
+                  pageCount={pageCount}
+                  start={pageStart + 1}
+                  end={pageEnd}
+                  total={totalProjects}
+                  onChange={goToPage}
+                />
               </div>
             </>
           )}
@@ -353,10 +419,85 @@ export default function PublicProjects() {
   )
 }
 
+function Pagination({ className = '', page, pageCount, start, end, total, onChange }) {
+  const buttonClass =
+    'inline-flex h-8 min-w-8 items-center justify-center rounded-md px-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40'
+
+  return (
+    <div className={`flex flex-wrap items-center justify-between gap-x-4 gap-y-2 ${className}`}>
+      <p className="text-xs text-blue-100/80">
+        Showing{' '}
+        <span className="font-semibold text-white">
+          {start}–{end}
+        </span>{' '}
+        of <span className="font-semibold text-white">{total}</span> {total === 1 ? 'project' : 'projects'}
+      </p>
+      <div className="ml-auto flex flex-wrap items-center gap-x-4 gap-y-2">
+        <p className="text-xs text-blue-100/80">
+          Page <span className="font-semibold text-white">{page}</span> of{' '}
+          <span className="font-semibold text-white">{pageCount}</span>
+        </p>
+        <nav aria-label="Project list pages" className="flex items-center gap-1">
+          <button
+            type="button"
+            aria-label="Previous page"
+            disabled={page === 1}
+            onClick={() => onChange(page - 1)}
+            className={`${buttonClass} bg-white/95 text-slate-700 shadow-sm hover:bg-white`}
+          >
+            <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+          </button>
+          {pageNumbers(page, pageCount).map((number, index) =>
+            number === null ? (
+              <span key={`gap-${index}`} className="px-1 text-sm text-blue-100/70">
+                …
+              </span>
+            ) : (
+              <button
+                key={number}
+                type="button"
+                aria-current={number === page ? 'page' : undefined}
+                onClick={() => onChange(number)}
+                className={`${buttonClass} shadow-sm ${
+                  number === page
+                    ? 'bg-blue-600 text-white ring-1 ring-white/40'
+                    : 'bg-white/95 text-slate-700 hover:bg-white'
+                }`}
+              >
+                {number}
+              </button>
+            ),
+          )}
+          <button
+            type="button"
+            aria-label="Next page"
+            disabled={page === pageCount}
+            onClick={() => onChange(page + 1)}
+            className={`${buttonClass} bg-white/95 text-slate-700 shadow-sm hover:bg-white`}
+          >
+            <ChevronRight className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </nav>
+      </div>
+    </div>
+  )
+}
+
 function PublicProjectDetail({ project, onClose }) {
   const { loading, data, photos, photosLoading } = useProjectTransparency(project.id)
-  const [photosOpen, setPhotosOpen] = useState(false)
-  const photoGroups = useMemo(() => groupPhotosByUpdate(photos, data?.updates ?? []), [photos, data])
+  // { photos, index } while the full-screen photo viewer is open.
+  const [viewer, setViewer] = useState(null)
+  const reportLabels = useMemo(() => reportLabelsByUpdate(data?.updates ?? []), [data])
+  const progress = data?.progress_percentage ?? null
+  // Same gate the staff detail pages use: a coordinate outside Donsol is
+  // never shown as though it were a real project site.
+  const mapProjects = useMemo(
+    () =>
+      isWithinDonsol(project.latitude, project.longitude)
+        ? [{ ...project, progress_percentage: progress }]
+        : [],
+    [project, progress],
+  )
 
   useEffect(() => {
     function handleKeyDown(event) {
@@ -442,16 +583,15 @@ function PublicProjectDetail({ project, onClose }) {
                   .join(' · ')}
               </p>
             ) : null}
-            {/* Same gate the staff detail pages use: a coordinate outside Donsol
-                is never shown as though it were a real project site. */}
+            <p className="mb-2 text-xs text-slate-400">Tap the pin to see the project&apos;s site photos.</p>
             <ProjectMap
-              projects={isWithinDonsol(project.latitude, project.longitude) ? [project] : []}
-              height="min(360px, 45vh)"
-              renderCardFooter={() => (
-                <ProjectPhotosButton
+              projects={mapProjects}
+              height="min(480px, 60vh)"
+              renderCardMedia={() => (
+                <PinPhotoGallery
+                  photos={photos}
                   loading={loading || photosLoading}
-                  count={photos.length}
-                  onClick={() => setPhotosOpen(true)}
+                  onOpen={(list, index) => setViewer({ photos: list, index })}
                 />
               )}
             />
@@ -459,8 +599,14 @@ function PublicProjectDetail({ project, onClose }) {
         </div>
       </div>
 
-      {photosOpen ? (
-        <ProjectPhotosDialog title={project.title} groups={photoGroups} onClose={() => setPhotosOpen(false)} />
+      {viewer ? (
+        <PhotoViewerDialog
+          title={project.title}
+          photos={viewer.photos}
+          startIndex={viewer.index}
+          reportLabels={reportLabels}
+          onClose={() => setViewer(null)}
+        />
       ) : null}
     </div>
   )
@@ -475,16 +621,12 @@ function Field({ label, children }) {
   )
 }
 
-// Only BEFORE/DURING/AFTER photos are ever returned by
-// get_public_project_transparency(); ISSUE/OTHER stay internal.
-const PHOTO_STAGE_LABELS = { BEFORE: 'Before', DURING: 'During', AFTER: 'After' }
-
 // Budget utilization, procurement, progress reports and site photos for one
 // published project. Everything comes from the get_public_project_transparency()
 // RPC (20261004140000_public_photos_by_update.sql), which returns a curated
 // field list and only for visibility = 'PUBLIC' projects. The public site
 // never reads procurement / project_updates / project_images directly.
-// Photos are shown from the map pin's card (ProjectPhotosDialog), not inline.
+// Photos are shown from the map pin's panel (PinPhotoGallery), not inline.
 function useProjectTransparency(projectId) {
   const [loading, setLoading] = useState(true)
   const [data, setData] = useState(null)
@@ -545,215 +687,17 @@ function ProjectTransparency({ loading, data }) {
   return (
     <>
       <BudgetUtilization data={data} />
+      <ProgramOfWorks pow={data.program_of_works} />
       <ProgressReports progress={data.progress_percentage} updates={data.updates ?? []} />
     </>
   )
 }
 
-// One group per progress report (newest first, matching the Physical
-// Progress list), each holding the photos uploaded with it. Photos not tied
-// to a published report (e.g. uploaded straight to the project) go last.
-function groupPhotosByUpdate(photos, updates) {
-  const byUpdate = new Map()
-  for (const photo of photos) {
-    const key = photo.project_update_id ?? null
-    if (!byUpdate.has(key)) byUpdate.set(key, [])
-    byUpdate.get(key).push(photo)
-  }
-
-  const groups = []
-  for (const update of updates) {
-    const updatePhotos = byUpdate.get(update.id)
-    if (!updatePhotos) continue
-    byUpdate.delete(update.id)
-    groups.push({
-      key: update.id,
-      label: `Progress report · ${formatDate(update.report_date)}`,
-      progress: update.progress_percentage,
-      photos: updatePhotos,
-    })
-  }
-
-  const rest = [...byUpdate.values()].flat()
-  if (rest.length > 0) {
-    groups.push({ key: 'other', label: 'Other site photos', progress: null, photos: rest })
-  }
-  return groups
-}
-
-function photoAlt(photo) {
-  return `${PHOTO_STAGE_LABELS[photo.image_stage] ?? 'Site'} photo, ${formatDate(photo.captured_at)}`
-}
-
-function photoCaption(photo) {
-  const stage = PHOTO_STAGE_LABELS[photo.image_stage]
-  return `${stage ? `${stage} · ` : ''}${formatDate(photo.captured_at)}`
-}
-
-// Rendered inside the map pin's details card (ProjectMap renderCardFooter).
-function ProjectPhotosButton({ loading, count, onClick }) {
-  if (loading) return <p className="text-xs text-slate-400">Loading project photos...</p>
-  if (count === 0) return <p className="text-xs text-slate-400">No project photos posted yet.</p>
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="flex w-full items-center justify-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700"
-    >
-      <Camera className="h-3.5 w-3.5" aria-hidden="true" />
-      View Project Photos ({count})
-    </button>
-  )
-}
-
-// Opened from the map pin's card. Portaled to <body> at z-1100 so it sits
-// above both the project modal and Leaflet's own layers. Keys are caught in
-// the capture phase so Esc closes only this, not the project modal under it.
-function ProjectPhotosDialog({ title, groups, onClose }) {
-  const flat = useMemo(() => groups.flatMap((group) => group.photos.map((photo) => ({ ...photo, group }))), [groups])
-  const [index, setIndex] = useState(null)
-  const viewing = index === null ? null : flat[index]
-
-  useEffect(() => {
-    function handleKeyDown(event) {
-      if (event.key === 'Escape') {
-        event.stopPropagation()
-        if (index === null) onClose()
-        else setIndex(null)
-      } else if (index !== null && event.key === 'ArrowRight') {
-        setIndex((i) => (i + 1) % flat.length)
-      } else if (index !== null && event.key === 'ArrowLeft') {
-        setIndex((i) => (i - 1 + flat.length) % flat.length)
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown, true)
-    return () => window.removeEventListener('keydown', handleKeyDown, true)
-  }, [index, flat.length, onClose])
-
-  const step = (delta) => setIndex((i) => (i + delta + flat.length) % flat.length)
-
-  return createPortal(
-    <div className="fixed inset-0 z-1100 flex items-center justify-center px-4">
-      <button
-        type="button"
-        aria-label="Close project photos"
-        onClick={onClose}
-        className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm"
-      />
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="public-project-photos-title"
-        className="relative flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-900/5"
-      >
-        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 px-5 pb-3 pt-5">
-          <div className="flex min-w-0 items-start gap-2">
-            {viewing ? (
-              <button
-                type="button"
-                aria-label="Back to all photos"
-                onClick={() => setIndex(null)}
-                className="-ml-1 shrink-0 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-              >
-                <ArrowLeft className="h-5 w-5" aria-hidden="true" />
-              </button>
-            ) : null}
-            <div className="min-w-0">
-              <h2
-                id="public-project-photos-title"
-                className="flex items-center gap-1.5 text-base font-semibold text-slate-800"
-              >
-                <Camera className="h-4 w-4 shrink-0 text-blue-600" aria-hidden="true" />
-                Project Photos
-              </h2>
-              <p className="mt-0.5 truncate text-xs text-slate-500">{title}</p>
-            </div>
-          </div>
-          <button
-            type="button"
-            aria-label="Close"
-            onClick={onClose}
-            className="shrink-0 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-          >
-            <X className="h-5 w-5" aria-hidden="true" />
-          </button>
-        </div>
-
-        {viewing ? (
-          <div className="flex min-h-0 flex-1 flex-col px-5 pb-5 pt-4">
-            <div className="relative flex min-h-0 flex-1 items-center justify-center rounded-lg bg-slate-900">
-              <img
-                src={viewing.signedUrl}
-                alt={photoAlt(viewing)}
-                className="max-h-[60vh] w-auto max-w-full object-contain"
-              />
-              {flat.length > 1 ? (
-                <>
-                  <button
-                    type="button"
-                    aria-label="Previous photo"
-                    onClick={() => step(-1)}
-                    className="absolute left-2 top-1/2 -translate-y-1/2 rounded-full bg-white/85 p-1.5 text-slate-700 shadow hover:bg-white"
-                  >
-                    <ChevronLeft className="h-5 w-5" aria-hidden="true" />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="Next photo"
-                    onClick={() => step(1)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full bg-white/85 p-1.5 text-slate-700 shadow hover:bg-white"
-                  >
-                    <ChevronRight className="h-5 w-5" aria-hidden="true" />
-                  </button>
-                </>
-              ) : null}
-            </div>
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
-              <span>
-                {viewing.group.label} · {photoCaption(viewing)}
-              </span>
-              <span className="tabular-nums">
-                {index + 1} / {flat.length}
-              </span>
-            </div>
-          </div>
-        ) : (
-          <div className="overflow-y-auto px-5 pb-5 pt-4">
-            {groups.map((group) => (
-              <section key={group.key} className="mb-5 last:mb-0">
-                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="text-xs font-semibold text-slate-600">{group.label}</h3>
-                  {hasValue(group.progress) ? (
-                    <Badge tone="blue">{Number(group.progress).toFixed(0)}%</Badge>
-                  ) : null}
-                </div>
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                  {group.photos.map((photo) => (
-                    <button
-                      key={photo.id}
-                      type="button"
-                      onClick={() => setIndex(flat.findIndex((p) => p.id === photo.id))}
-                      className="group block overflow-hidden rounded-lg border border-slate-200 text-left"
-                    >
-                      <img
-                        src={photo.signedUrl}
-                        alt={photoAlt(photo)}
-                        loading="lazy"
-                        className="aspect-square w-full object-cover transition-transform group-hover:scale-105"
-                      />
-                      <p className="px-1.5 py-1 text-[11px] text-slate-500">{photoCaption(photo)}</p>
-                    </button>
-                  ))}
-                </div>
-              </section>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>,
-    document.body,
-  )
+// Progress report each photo was uploaded with, by project_update_id, for
+// the full-screen viewer's caption. Photos not tied to a published report
+// (e.g. uploaded straight to the project) simply have no label.
+function reportLabelsByUpdate(updates) {
+  return new Map(updates.map((update) => [update.id, `Progress report · ${formatDate(update.report_date)}`]))
 }
 
 function hasValue(value) {
@@ -824,6 +768,25 @@ function BudgetUtilization({ data }) {
   )
 }
 
+// Engineering's detailed Program of Works: where the budget goes (cost
+// summary and Bill of Quantities), the work schedule, and the materials,
+// manpower and equipment the project needs.
+function ProgramOfWorks({ pow }) {
+  return (
+    <div className="mb-4 border-t border-slate-100 pt-4">
+      <h3 className="mb-3 flex items-center gap-1.5 text-sm font-semibold text-slate-800">
+        <FileSpreadsheet className="h-4 w-4 text-blue-600" aria-hidden="true" />
+        Program of Works (Budget Breakdown)
+      </h3>
+      {pow ? (
+        <PowBreakdown pow={pow} />
+      ) : (
+        <p className="text-xs text-slate-500">The detailed Program of Works for this project has not been posted yet.</p>
+      )}
+    </div>
+  )
+}
+
 function ProgressReports({ progress, updates }) {
   const percent = hasValue(progress) ? Number(progress) : null
 
@@ -836,8 +799,7 @@ function ProgressReports({ progress, updates }) {
 
       {percent !== null ? (
         <div className="mb-3">
-          <div className="mb-1 flex justify-between text-xs text-slate-500">
-            <span>Accomplishment</span>
+          <div className="mb-1 flex justify-end text-xs">
             <span className="font-semibold text-slate-700">{percent.toFixed(0)}%</span>
           </div>
           <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">

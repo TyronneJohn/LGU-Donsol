@@ -1,8 +1,6 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { PAGE_SIZE } from '../../hooks/usePagination'
 
-// Page numbers to show: always the first and last page, plus the current
-// page and its neighbours, with '…' standing in for the gaps.
 function pageList(page, totalPages) {
   const pages = []
   for (let p = 1; p <= totalPages; p++) {
@@ -18,10 +16,6 @@ function pageList(page, totalPages) {
 const baseButton =
   'inline-flex h-8 min-w-8 items-center justify-center rounded-md border px-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 disabled:cursor-not-allowed disabled:opacity-50'
 const idleButton = 'border-slate-300 bg-white text-slate-600 hover:border-slate-400 hover:bg-slate-50'
-
-// Pager shown under a list table — always visible, even when everything fits
-// on one page. Renders nothing only for an empty list, where the page shows
-// its empty state instead. Takes the object returned by usePagination.
 export default function Pagination({ page, totalPages, totalItems, setPage }) {
   if (totalItems === 0) return null
 
@@ -34,6 +28,9 @@ export default function Pagination({ page, totalPages, totalItems, setPage }) {
         Showing {first}–{last} of {totalItems} {totalItems === 1 ? 'project' : 'projects'}
       </p>
       <div className="flex flex-wrap items-center gap-1">
+        <span className="mr-2 text-xs text-slate-500">
+          Page {page} of {totalPages}
+        </span>
         <button
           type="button"
           onClick={() => setPage(page - 1)}

@@ -3,6 +3,7 @@ import { FileText } from 'lucide-react'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../hooks/useToast'
 import Button from './ui/Button'
+import PowDetailsPanel from './PowDetailsPanel'
 import { formatCurrency, formatDate } from '@shared/utils/format'
 import { getDocumentViewUrl } from '@shared/utils/documentViewer'
 
@@ -25,20 +26,20 @@ async function openDocument(doc, toast) {
   window.open(getDocumentViewUrl(data.signedUrl, doc.file_name), '_blank', 'noopener,noreferrer')
 }
 
-// The POW submitted with one monitoring update, shown on that update's entry
-// in Monitoring History. `documents` is the update's embedded
+// The Progress Report submitted with one monitoring update, shown on that
+// update's entry in Monitoring History. `documents` is the update's embedded
 // project_documents rows (linked by project_update_id); renders nothing for
 // updates that predate the link.
-export function UpdatePowButton({ documents }) {
+export function UpdateProgressReportButton({ documents }) {
   const toast = useToast()
   const [openingId, setOpeningId] = useState(null)
 
-  const powDocuments = (documents ?? []).filter((doc) => doc.document_category === 'PROGRAM_OF_WORKS')
-  if (powDocuments.length === 0) return null
+  const reportDocuments = (documents ?? []).filter((doc) => doc.document_category === 'PROGRESS_REPORT')
+  if (reportDocuments.length === 0) return null
 
   return (
     <div className="mt-2 flex flex-wrap gap-2">
-      {powDocuments.map((doc) => (
+      {reportDocuments.map((doc) => (
         <Button
           key={doc.id}
           type="button"
@@ -52,7 +53,7 @@ export function UpdatePowButton({ documents }) {
             setOpeningId(null)
           }}
         >
-          {powDocuments.length === 1 ? 'View POW' : `View POW — ${doc.file_name}`}
+          {reportDocuments.length === 1 ? 'View Progress Report' : `View Progress Report — ${doc.file_name}`}
         </Button>
       ))}
     </div>
@@ -128,6 +129,8 @@ export default function ProgramOfWorksSection({ project }) {
           <p className="mt-0.5 text-sm text-slate-800">{formatDate(project.pow_date)}</p>
         </div>
       </div>
+
+      <PowDetailsPanel projectId={project.id} powDate={project.pow_date} />
 
       {!loading && !latest ? (
         <p className="mt-4 text-sm text-slate-400">No Program of Works document on file.</p>

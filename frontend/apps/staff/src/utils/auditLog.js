@@ -24,6 +24,7 @@ export const AUDIT_ACTION_LABELS = {
   IMAGE_UPLOADED: 'Image Uploaded',
   MESSAGE_SENT: 'Message Sent',
   DSS_DECISION_RECORDED: 'DSS Decision Recorded',
+  PROGRAM_OF_WORKS_RETURNED: 'POW Returned for Revision',
 }
 
 export const AUDIT_ACTION_TONES = {
@@ -47,6 +48,7 @@ export const AUDIT_ACTION_TONES = {
   IMAGE_UPLOADED: 'neutral',
   MESSAGE_SENT: 'neutral',
   DSS_DECISION_RECORDED: 'blue',
+  PROGRAM_OF_WORKS_RETURNED: 'amber',
 }
 
 export const ENTITY_TYPE_LABELS = {

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ChevronDown, FileWarning, MapPin, Save, Send, XCircle } from 'lucide-react'
+import { ChevronDown, FileWarning, MapPin, RotateCcw, Save, Send, XCircle } from 'lucide-react'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
 import { useConfirm } from '../../hooks/useConfirm'
@@ -23,8 +23,9 @@ import { PROJECT_STATUS_LABELS, PROJECT_STATUS_TONES, SECTOR_LABELS } from '@sha
 import { DONSOL_BARANGAYS } from '@shared/utils/barangays'
 import { DONSOL_BARANGAY_CENTROIDS } from '@shared/utils/barangayCentroids'
 import LocationModal from '../../components/LocationModal'
-import ConfirmedBySection from '../../components/ConfirmedBySection'
+import ConfirmNameDialog from '../../components/ConfirmNameDialog'
 import ProjectDocumentsList from '../../components/ProjectDocumentsList'
+import PowDetailsPanel from '../../components/PowDetailsPanel'
 
 const inputClass =
   'w-full rounded-md border border-slate-400 dark:border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500'
@@ -100,11 +101,15 @@ export default function ProjectForm() {
   const [endorsing, setEndorsing] = useState(false)
   const [rejectRemarks, setRejectRemarks] = useState('')
   const [rejecting, setRejecting] = useState(false)
+  const [powReturnRemarks, setPowReturnRemarks] = useState('')
+  const [returningPow, setReturningPow] = useState(false)
   const [locationOpen, setLocationOpen] = useState(false)
 
   const formErrors = useFieldErrors()
   const rejectErrors = useFieldErrors()
+  const powReturnErrors = useFieldErrors()
   const confirmedBy = useConfirmedBy()
+  const [namePrompt, setNamePrompt] = useState(null)
   const { errors } = formErrors
 
   const barangayPopover = useDismissablePopover()
@@ -131,7 +136,7 @@ export default function ProjectForm() {
   }
 
   async function loadHistory(id) {
-    const [approvalsResult, endorsementsResult] = await Promise.all([
+    const [approvalsResult, endorsementsResult, revisionsResult] = await Promise.all([
       supabase
         .from('project_approvals')
         .select(
@@ -148,6 +153,13 @@ export default function ProjectForm() {
         )
         .eq('project_id', id)
         .order('endorsed_at', { ascending: false }),
+      supabase
+        .from('project_pow_revisions')
+        .select(
+          `id, pow_amount, return_remarks, returned_at,
+           returner:profiles!project_pow_revisions_returned_by_fkey(full_name)`,
+        )
+        .eq('project_id', id),
     ])
 
     if (approvalsResult.error) {
@@ -155,6 +167,9 @@ export default function ProjectForm() {
     }
     if (endorsementsResult.error) {
       toast.error('Could not load endorsement history', endorsementsResult.error.message)
+    }
+    if (revisionsResult.error) {
+      toast.error('Could not load Program of Works revisions', revisionsResult.error.message)
     }
 
     const decisions = (approvalsResult.data ?? []).map((entry) => ({
@@ -173,8 +188,18 @@ export default function ProjectForm() {
       at: entry.endorsed_at,
       notes: entry.notes,
     }))
+    const returns = (revisionsResult.data ?? []).map((entry) => ({
+      id: `pow-return-${entry.id}`,
+      label: `POW Returned for Revision (${formatCurrency(entry.pow_amount)})`,
+      tone: 'amber',
+      actor: entry.returner?.full_name,
+      at: entry.returned_at,
+      notes: entry.return_remarks,
+    }))
 
-    setHistory([...decisions, ...endorsements].sort((a, b) => new Date(b.at) - new Date(a.at)))
+    setHistory(
+      [...decisions, ...endorsements, ...returns].sort((a, b) => new Date(b.at) - new Date(a.at)),
+    )
   }
 
   async function loadProject() {
@@ -377,10 +402,22 @@ export default function ProjectForm() {
     }
   }
 
+  // Opens the Confirmed By popup (ConfirmNameDialog) for an action and
+  // resolves with the name typed in, or null if it was cancelled. It doubles
+  // as the action's "are you sure?" step.
+  function askConfirmedBy(options) {
+    return new Promise((resolve) => setNamePrompt({ ...options, resolve }))
+  }
+
   async function handleSaveDraft(event) {
     event.preventDefault()
     if (!validateRequiredFields()) return
-    if (!confirmedBy.require()) return
+    const confirmedName = await askConfirmedBy({
+      title: isNew ? 'Create this project draft?' : 'Save changes to this project?',
+      confirmLabel: isNew ? 'Create Draft' : 'Save Changes',
+      confirmIcon: Save,
+    })
+    if (!confirmedName) return
 
     setSaving(true)
     const payload = buildPayload()
@@ -397,7 +434,7 @@ export default function ProjectForm() {
         toast.error('Could not create project', error?.message ?? 'Unexpected error creating the project.')
         return
       }
-      await confirmedBy.record(data.id, 'Created the project')
+      await confirmedBy.record(data.id, 'Created the project', confirmedName)
       clearDraft(draftKey)
       toast.success('Draft created', 'You can now submit it for review when ready.')
       navigate('/mpdc/projects')
@@ -413,7 +450,7 @@ export default function ProjectForm() {
       toast.error('Could not save changes', error.message)
       return
     }
-    await confirmedBy.record(project.id, 'Updated the project details')
+    await confirmedBy.record(project.id, 'Updated the project details', confirmedName)
     clearDraft(draftKey)
     // The saved values are the clean state now, so nothing is left "unsaved"
     // and the mirror below has nothing to re-write on the way out.
@@ -423,17 +460,18 @@ export default function ProjectForm() {
   }
 
   async function handleSubmitForReview() {
-    if (!validateRequiredFields() || !confirmedBy.require()) {
+    if (!validateRequiredFields()) {
       setShowSubmitPanel(false)
       return
     }
 
-    const confirmed = await confirm({
+    const confirmedName = await askConfirmedBy({
       title: 'Submit this project for review?',
       description: 'It will appear in the Project Review queue for a decision.',
       confirmLabel: 'Submit for Review',
+      confirmIcon: Send,
     })
-    if (!confirmed) return
+    if (!confirmedName) return
 
     setSubmitting(true)
 
@@ -493,21 +531,20 @@ export default function ProjectForm() {
       if (notifyError) toast.error('Submitted, but could not notify Engineering', notifyError.message)
     }
 
-    await confirmedBy.record(project.id, 'Submitted the project for review')
+    await confirmedBy.record(project.id, 'Submitted the project for review', confirmedName)
     setSubmitting(false)
     toast.success('Project submitted', 'It has been added to the review queue.')
     navigate('/mpdc/projects')
   }
 
   async function handleEndorse() {
-    if (!confirmedBy.require()) return
-
-    const confirmed = await confirm({
+    const confirmedName = await askConfirmedBy({
       title: 'Endorse this project to BAC?',
       description: 'BAC will be notified and can begin procurement.',
       confirmLabel: 'Endorse to BAC',
+      confirmIcon: Send,
     })
-    if (!confirmed) return
+    if (!confirmedName) return
 
     setEndorsing(true)
 
@@ -527,22 +564,57 @@ export default function ProjectForm() {
       return
     }
 
-    await confirmedBy.record(project.id, 'Endorsed the project to BAC')
+    await confirmedBy.record(project.id, 'Endorsed the project to BAC', confirmedName)
     toast.success('Project endorsed', 'BAC has been notified and can begin procurement.')
     navigate('/mpdc/projects')
   }
 
+  // Sends the submitted POW back to Engineering (return_program_of_works):
+  // the old version goes to the revision history, Engineering is notified and
+  // revises it. The project stays under review; the allocation itself can
+  // only change through the SB, so the POW is what gets revised.
+  async function handleReturnPow() {
+    const trimmedRemarks = powReturnRemarks.trim()
+    if (
+      !powReturnErrors.validate({
+        pow_return_remarks: !trimmedRemarks && 'Enter what Engineering needs to revise in the Program of Works.',
+      })
+    ) {
+      return
+    }
+    const confirmed = await confirm({
+      title: 'Return the Program of Works to Engineering?',
+      description: 'Engineering will be notified and must submit a revised POW before the project can be endorsed to BAC.',
+      confirmLabel: 'Return POW',
+    })
+    if (!confirmed) return
+
+    setReturningPow(true)
+    const { error } = await supabase.rpc('return_program_of_works', {
+      p_project_id: project.id,
+      p_remarks: trimmedRemarks,
+    })
+    if (error) {
+      setReturningPow(false)
+      toast.error('Could not return the Program of Works', error.message)
+      return
+    }
+
+    setReturningPow(false)
+    setPowReturnRemarks('')
+    toast.success('Program of Works returned', 'Engineering has been notified to revise it.')
+    loadProject()
+  }
+
   // MPDC's final "no". Filed as a project_approvals decision against the
   // latest submission; apply_project_approval (DB trigger) moves the project
-  // to REJECTED and writes the audit log. Engineering can only return a
-  // project, never reject it (20260929100000_mpdc_approval_authority.sql).
+  // to REJECTED and writes the audit log. Engineering can neither reject nor
+  // return a project (20261019100000_pow_revision.sql).
   async function handleReject() {
     const trimmedRemarks = rejectRemarks.trim()
     if (!rejectErrors.validate({ reject_remarks: !trimmedRemarks && 'Enter the reason for rejecting this project.' })) {
       return
     }
-    if (!confirmedBy.require()) return
-
     const confirmed = await confirm({
       title: 'Reject this project?',
       description: 'Engineering will be notified. This decision is recorded permanently.',
@@ -601,7 +673,6 @@ export default function ProjectForm() {
       if (notifyError) toast.error('Rejected, but could not notify Engineering', notifyError.message)
     }
 
-    await confirmedBy.record(project.id, 'Rejected the project')
     setRejecting(false)
     toast.success('Project rejected', 'The decision has been recorded.')
     navigate('/mpdc/projects')
@@ -647,6 +718,10 @@ export default function ProjectForm() {
   // enforcement; this only keeps the button from being offered before that
   // check would pass.
   const reviewReady = !isNew && project.pow_amount != null && Number(project.pow_amount) > 0
+  // Endorsing also needs the POW within the SB-approved allocation, so no ABC
+  // above the appropriation reaches BAC (endorsements_insert_mpdc, 20261019100000).
+  const powOverAllocation =
+    reviewReady && project.approved_budget != null && Number(project.pow_amount) > Number(project.approved_budget)
 
   return (
     <div>
@@ -860,7 +935,8 @@ export default function ProjectForm() {
               <LocationModal
                 open={locationOpen}
                 project={{
-                  id: 'preview',
+                  ...project,
+                  id: project?.id ?? 'preview',
                   title: form.title || 'This project',
                   project_code: project?.project_code ?? 'New project',
                   barangay: form.barangay,
@@ -868,6 +944,7 @@ export default function ProjectForm() {
                   latitude: form.latitude,
                   longitude: form.longitude,
                 }}
+                showDetails={Boolean(project)}
                 onClose={() => setLocationOpen(false)}
               />
             </div>
@@ -1014,6 +1091,7 @@ export default function ProjectForm() {
                 )}
               </div>
             </div>
+            <PowDetailsPanel projectId={project.id} powDate={project.pow_date} defaultOpen />
           </section>
         ) : null}
 
@@ -1023,7 +1101,13 @@ export default function ProjectForm() {
           <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
             <h2 className="text-sm font-semibold text-slate-800">Approve and Endorse to BAC</h2>
 
-            {reviewReady ? (
+            {powOverAllocation ? (
+              <p className="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                The Program of Works exceeds the allocation by{' '}
+                {formatCurrency(Number(project.pow_amount) - Number(project.approved_budget))}, so this project can't be
+                endorsed to BAC. Return the POW to Engineering below so they can revise it to fit the allocation.
+              </p>
+            ) : reviewReady ? (
               <>
                 <p className="mt-1 text-sm text-slate-500">
                   When the project is technically ready, approve it and endorse it to BAC to begin procurement.
@@ -1054,6 +1138,39 @@ export default function ProjectForm() {
                 This project can be endorsed to BAC once the POW is on file.
               </p>
             )}
+          </section>
+        ) : null}
+
+        {!isNew && project.status === 'SUBMITTED_FOR_REVIEW' && reviewReady ? (
+          <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
+            <h2 className="text-sm font-semibold text-slate-800">Return POW to Engineering</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Send the Program of Works back for revision if it exceeds the allocation or has wrong items, quantities or
+              unit costs. Engineering will submit a revised POW; the current one is kept in the Review History.
+            </p>
+
+            <div className="mt-4">
+              <label htmlFor="pow_return_remarks" className="mb-1 block text-sm font-medium text-slate-700">
+                What needs to be revised *
+              </label>
+              <textarea
+                id="pow_return_remarks"
+                rows={3}
+                value={powReturnRemarks}
+                onChange={(event) => {
+                  setPowReturnRemarks(event.target.value)
+                  powReturnErrors.clearError('pow_return_remarks')
+                }}
+                className={textareaClass + invalidClass(powReturnErrors.errors.pow_return_remarks)}
+              />
+              <FieldError message={powReturnErrors.errors.pow_return_remarks} />
+            </div>
+
+            <div className="mt-3">
+              <Button variant="secondary" icon={RotateCcw} onClick={handleReturnPow} loading={returningPow}>
+                Return POW
+              </Button>
+            </div>
           </section>
         ) : null}
 
@@ -1095,16 +1212,27 @@ export default function ProjectForm() {
           </section>
         ) : null}
 
-        <ConfirmedBySection
-          projectId={project?.id ?? null}
-          confirmedBy={
-            editable || ['SUBMITTED_FOR_REVIEW', 'RETURNED_FOR_REVISION'].includes(project?.status)
-              ? confirmedBy
-              : null
-          }
-          refreshKey={confirmedBy.refreshKey}
-        />
       </div>
+
+      {namePrompt ? (
+        <ConfirmNameDialog
+          title={namePrompt.title}
+          description={`${namePrompt.description ? `${namePrompt.description} ` : ''}Your name is recorded as Confirmed By.`}
+          label="Confirmed By (Your Full Name)"
+          confirmLabel={namePrompt.confirmLabel}
+          confirmIcon={namePrompt.confirmIcon}
+          initialName={confirmedBy.name}
+          onConfirm={(confirmedName) => {
+            confirmedBy.setName(confirmedName)
+            namePrompt.resolve(confirmedName)
+            setNamePrompt(null)
+          }}
+          onCancel={() => {
+            namePrompt.resolve(null)
+            setNamePrompt(null)
+          }}
+        />
+      ) : null}
     </div>
   )
 }

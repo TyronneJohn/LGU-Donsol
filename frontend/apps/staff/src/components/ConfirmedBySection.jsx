@@ -19,12 +19,14 @@ const inputClass =
 //   action on the page requires. Leave it out on read-only pages.
 // - `projectId` loads the history of names already recorded; null for a
 //   project that hasn't been saved yet.
-export default function ConfirmedBySection({ projectId, confirmedBy, refreshKey }) {
+// - `showHistory` shows the table of recorded names. Only the Admin can read
+//   it (RLS); office pages pass false and keep just the name input.
+export default function ConfirmedBySection({ projectId, confirmedBy, refreshKey, showHistory = true }) {
   const toast = useToast()
   const [entries, setEntries] = useState(null)
 
   useEffect(() => {
-    if (!projectId) {
+    if (!showHistory || !projectId) {
       setEntries([])
       return undefined
     }
@@ -43,7 +45,9 @@ export default function ConfirmedBySection({ projectId, confirmedBy, refreshKey 
     return () => {
       cancelled = true
     }
-  }, [projectId, refreshKey])
+  }, [projectId, refreshKey, showHistory])
+
+  if (!showHistory && !confirmedBy) return null
 
   return (
     <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
@@ -52,8 +56,9 @@ export default function ConfirmedBySection({ projectId, confirmedBy, refreshKey 
         <h2 className="text-sm font-semibold text-slate-800">Confirmed By</h2>
       </div>
       <p className="mt-0.5 text-xs text-slate-400">
-        The staff who worked on this project. Office accounts are shared, so each save, submission or update
-        records the real name of the person who did it.
+        {showHistory
+          ? 'The staff who worked on this project. Office accounts are shared, so each save, submission or update records the real name of the person who did it.'
+          : 'Office accounts are shared, so your name is recorded with each save, submission or update. Only the Admin can see this record.'}
       </p>
 
       {confirmedBy ? (
@@ -78,7 +83,7 @@ export default function ConfirmedBySection({ projectId, confirmedBy, refreshKey 
         </div>
       ) : null}
 
-      {entries === null ? (
+      {!showHistory ? null : entries === null ? (
         <p className="mt-4 text-sm text-slate-500">Loading...</p>
       ) : entries.length === 0 ? (
         <p className="mt-4 text-sm text-slate-500">No confirmed actions recorded yet.</p>

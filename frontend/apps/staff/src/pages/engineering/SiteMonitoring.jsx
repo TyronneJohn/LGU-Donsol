@@ -251,7 +251,7 @@ export default function SiteMonitoring() {
                       <Button to={`/engineering/monitoring/${project.id}`} variant="secondary" size="sm">
                         View
                       </Button>
-                      {MONITORING_EDITABLE_STATUSES.includes(project.status) ? (
+                      {MONITORING_EDITABLE_STATUSES.includes(project.status) && project.updateRequest ? (
                         <Button to={`/engineering/monitoring/${project.id}`} variant="secondary" size="sm">
                           Edit
                         </Button>
@@ -260,7 +260,11 @@ export default function SiteMonitoring() {
                           variant="secondary"
                           size="sm"
                           disabled
-                          title="Only For Implementation or Ongoing projects can be updated"
+                          title={
+                            MONITORING_EDITABLE_STATUSES.includes(project.status)
+                              ? 'Available once MPDC requests a progress update'
+                              : 'Only For Implementation or Ongoing projects can be updated'
+                          }
                         >
                           Edit
                         </Button>

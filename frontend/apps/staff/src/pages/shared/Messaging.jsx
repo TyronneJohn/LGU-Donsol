@@ -123,8 +123,12 @@ export default function Messaging() {
   const threadEndRef = useRef(null)
   const attachPopover = useDismissablePopover()
 
-  async function loadMessages() {
-    setLoading(true)
+  // Only the first load shows the loading screen. Realtime refreshes (like
+  // the read-receipt update fired when an unread thread is opened) reload
+  // silently — swapping in the loading screen would unmount the thread and
+  // remount it scrolled to the top, hiding the newest message.
+  async function loadMessages({ silent = false } = {}) {
+    if (!silent) setLoading(true)
     const { data, error } = await supabase
       .from('messages')
       .select(MESSAGE_SELECT)
@@ -156,12 +160,12 @@ export default function Messaging() {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'messages', filter: `recipient_role=eq.${role}` },
-        () => loadMessages(),
+        () => loadMessages({ silent: true }),
       )
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'messages', filter: `sender_role=eq.${role}` },
-        () => loadMessages(),
+        () => loadMessages({ silent: true }),
       )
       .subscribe()
 
@@ -192,7 +196,7 @@ export default function Messaging() {
 
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ block: 'end' })
-  }, [activeBucket?.items.length, selectedRole])
+  }, [activeBucket?.items.length, selectedRole, loading])
 
   // Opening a conversation marks its unread messages — and the notification
   // that was raised for each of them — as read. Never on mere existence,

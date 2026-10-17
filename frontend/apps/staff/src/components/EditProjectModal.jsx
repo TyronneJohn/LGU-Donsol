@@ -19,6 +19,7 @@ const inputClass =
 
 export const DOC_CATEGORY_LABELS = {
   PROGRAM_OF_WORKS: 'Program of Works',
+  PROGRESS_REPORT: 'Progress Report',
   PERMIT: 'Permit',
   DESIGN_PLAN: 'Design Plan',
   OTHER: 'Other',

@@ -32,7 +32,7 @@ export function useConfirmedBy() {
 
     const message = trimmed
       ? 'Enter your full name.'
-      : 'Type your full name in Confirmed By at the bottom of the page before continuing.'
+      : 'Type your full name in Confirmed By before continuing.'
     setError(message)
     toast.error('Confirmed By is required', message)
     const element = document.getElementById(CONFIRMED_BY_INPUT_ID)
@@ -43,12 +43,14 @@ export function useConfirmedBy() {
     return false
   }, [name, toast])
 
+  // `nameOverride`: the name just typed into a ConfirmNameDialog, used
+  // directly since setName() hasn't re-rendered this callback yet.
   const record = useCallback(
-    async (projectId, action) => {
+    async (projectId, action, nameOverride) => {
       const { error: insertError } = await supabase.from('project_confirmations').insert({
         project_id: projectId,
         action,
-        confirmed_by_name: name.trim(),
+        confirmed_by_name: (nameOverride ?? name).trim(),
       })
       if (insertError) toast.error('Saved, but could not record Confirmed By', insertError.message)
       setRefreshKey((current) => current + 1)

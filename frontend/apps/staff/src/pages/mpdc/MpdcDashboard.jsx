@@ -5,6 +5,7 @@ import { useAnnualBudget } from '../../hooks/useAnnualBudget'
 import PageHeader from '../../components/ui/PageHeader'
 import Button from '../../components/ui/Button'
 import StatTile from '../../components/ui/StatTile'
+import SavingsTile from '../../components/SavingsTile'
 import { LoadingState } from '@shared/components/ui/LoadingState'
 import EmptyState from '@shared/components/ui/EmptyState'
 import { ProjectStatusCharts } from '../../components/ui/ProjectStatusCharts'
@@ -91,12 +92,15 @@ export default function MpdcDashboard() {
         />
       ) : (
         <>
-          <div className="mb-3">
-            <StatTile
-              label={`Remaining Budget — ${budget.year}`}
-              value={budget.loading ? '—' : budget.ceiling != null ? formatCurrency(budget.remaining) : 'Not set'}
-              featured
-            />
+          <div className="mb-3 grid gap-3 sm:grid-cols-2">
+            <div>
+              <StatTile
+                label={`Remaining Budget — ${budget.year}`}
+                value={budget.loading ? '—' : budget.ceiling != null ? formatCurrency(budget.remaining) : 'Not set'}
+                featured
+              />
+            </div>
+            <SavingsTile projectLink={(id) => `/mpdc/monitoring/${id}`} />
           </div>
           <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-5">
             {STAT_TILES.map((tile) => (

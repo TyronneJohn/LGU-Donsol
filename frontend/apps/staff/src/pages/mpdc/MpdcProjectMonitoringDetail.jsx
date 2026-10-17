@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Clock, FileWarning, Images, MapPin, MessageSquare, X } from 'lucide-react'
-import { UpdateAnalysisFlag, UpdateComparisonModal } from '../../components/UpdateComparison'
+import { FileWarning, MapPin } from 'lucide-react'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
 import { useAuth } from '../../hooks/useAuth'
@@ -13,10 +11,9 @@ import { LoadingState } from '@shared/components/ui/LoadingState'
 import EmptyState from '@shared/components/ui/EmptyState'
 import DssPanel from '../../components/ui/DssPanel'
 import LocationModal from '../../components/LocationModal'
-import ConfirmedBySection from '../../components/ConfirmedBySection'
 import ProjectDocumentsList from '../../components/ProjectDocumentsList'
-import ProgramOfWorksSection, { UpdatePowButton } from '../../components/ProgramOfWorksSection'
-import SitePhotoGrid from '../../components/ui/SitePhotoGrid'
+import ProgramOfWorksSection from '../../components/ProgramOfWorksSection'
+import BeforeAfterSection from '../../components/BeforeAfterSection'
 import { formatCurrency, formatDate } from '@shared/utils/format'
 import {
   PROJECT_STATUS_LABELS,
@@ -40,120 +37,6 @@ function Field({ label, children }) {
   )
 }
 
-// On-demand modal for Monitoring History, same createPortal/backdrop pattern
-// as LocationModal — keeps the page short instead of always listing every
-// update + photo inline, mirroring the same change on Engineering's own
-// ProjectMonitoringDetail.jsx.
-function MonitoringHistoryModal({ open, onClose, updates, imagesByUpdate, onCompare }) {
-  useEffect(() => {
-    if (!open) return undefined
-
-    function handleKeyDown(event) {
-      if (event.key === 'Escape') onClose()
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [open, onClose])
-
-  if (!open) return null
-
-  const unassignedImages = imagesByUpdate.get('unassigned') ?? []
-
-  return createPortal(
-    <div className="fixed inset-0 z-1000 flex items-center justify-center px-4">
-      <button
-        type="button"
-        aria-label="Dismiss dialog"
-        onClick={onClose}
-        className="fixed inset-0 bg-blue-950/40 backdrop-blur-sm"
-      />
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="history-modal-title"
-        className="animate-pop-in relative flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-900/5"
-      >
-        <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
-          <h2 id="history-modal-title" className="flex items-center gap-2 text-base font-semibold text-slate-800">
-            <Clock className="h-4 w-4 text-blue-600" aria-hidden="true" />
-            Monitoring History
-          </h2>
-          <button
-            type="button"
-            aria-label="Close"
-            onClick={onClose}
-            className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-          >
-            <X className="h-5 w-5" aria-hidden="true" />
-          </button>
-        </div>
-
-        <div className="overflow-y-auto p-5">
-          {updates.length === 0 ? (
-            <p className="text-sm text-slate-500">No monitoring updates reported yet.</p>
-          ) : (
-            <ul className="space-y-4">
-              {updates.map((entry) => (
-                <li key={entry.id} className="rounded-md border border-slate-100 bg-slate-50 p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="flex items-center gap-2 text-sm font-medium text-slate-800">
-                      {entry.progress_percentage != null ? `${entry.progress_percentage}% complete` : 'Update'}
-                      {entry.id === updates[0]?.id ? <Badge tone="blue">New</Badge> : null}
-                    </span>
-                    <span className="text-xs text-slate-500">{formatDate(entry.report_date)}</span>
-                  </div>
-                  <p className="mt-1 text-xs text-slate-500">by {entry.reporter?.full_name ?? '—'}</p>
-                  <UpdateAnalysisFlag update={entry} />
-                  <UpdatePowButton documents={entry.pow_documents} />
-                  {(imagesByUpdate.get(entry.id) ?? []).length > 0 ? (
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      icon={Images}
-                      className="mt-2"
-                      onClick={() => onCompare(entry.id)}
-                    >
-                      Compare with previous photos
-                    </Button>
-                  ) : null}
-                  {entry.weather_condition ? (
-                    <p className="mt-1 text-xs text-slate-500">Weather: {entry.weather_condition}</p>
-                  ) : null}
-                  {entry.narrative_report ? (
-                    <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{entry.narrative_report}</p>
-                  ) : null}
-                  {entry.issues_encountered ? (
-                    <p className="mt-1 whitespace-pre-wrap text-sm text-red-700">
-                      Issues: {entry.issues_encountered}
-                    </p>
-                  ) : null}
-
-                  {(imagesByUpdate.get(entry.id) ?? []).length > 0 ? (
-                    <div className="mt-3">
-                      <SitePhotoGrid images={imagesByUpdate.get(entry.id)} />
-                    </div>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          )}
-
-          {unassignedImages.length > 0 ? (
-            <div className="mt-6 border-t border-slate-100 pt-4">
-              <h3 className="text-sm font-semibold text-slate-800">Other Site Photos</h3>
-              <div className="mt-3">
-                <SitePhotoGrid images={unassignedImages} />
-              </div>
-            </div>
-          ) : null}
-        </div>
-      </div>
-    </div>,
-    document.body,
-  )
-}
-
 // Read-only counterpart to engineering/ProjectMonitoringDetail.jsx: same data
 // (project_updates + project_images, same signed-URL pattern), no ownership
 // check (any staff member may view via projects_select_staff /
@@ -172,8 +55,6 @@ export default function MpdcProjectMonitoringDetail() {
   const [updates, setUpdates] = useState([])
   const [images, setImages] = useState([])
   const [locationOpen, setLocationOpen] = useState(false)
-  const [historyOpen, setHistoryOpen] = useState(false)
-  const [compareUpdateId, setCompareUpdateId] = useState(null)
   const [requestingUpdate, setRequestingUpdate] = useState(false)
 
   async function loadProcurement() {
@@ -200,7 +81,7 @@ export default function MpdcProjectMonitoringDetail() {
       .select(
         `id, progress_percentage, narrative_report, issues_encountered, weather_condition, report_date, created_at,
          ai_analysis_status, ai_analysis_result,
-         pow_documents:project_documents(id, document_category, file_name, storage_path),
+         report_documents:project_documents(id, document_category, file_name, storage_path),
          reporter:profiles!project_updates_reported_by_fkey(full_name)`,
       )
       .eq('project_id', projectId)
@@ -373,12 +254,6 @@ export default function MpdcProjectMonitoringDetail() {
   }
 
   const dssDecision = evaluateProjectDss(project, updates)
-  const imagesByUpdate = images.reduce((map, image) => {
-    const key = image.project_update_id ?? 'unassigned'
-    if (!map.has(key)) map.set(key, [])
-    map.get(key).push(image)
-    return map
-  }, new Map())
 
   return (
     <div>
@@ -391,23 +266,9 @@ export default function MpdcProjectMonitoringDetail() {
           { label: project.project_code },
         ]}
         actions={
-          <div className="flex items-center gap-2">
-            <Badge tone={PROJECT_STATUS_TONES[project.status]}>
-              {PROJECT_STATUS_LABELS[project.status] ?? project.status}
-            </Badge>
-            {MONITORING_EDITABLE_STATUSES.includes(project.status) ? (
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                icon={MessageSquare}
-                loading={requestingUpdate}
-                onClick={handleRequestUpdate}
-              >
-                Request Update
-              </Button>
-            ) : null}
-          </div>
+          <Badge tone={PROJECT_STATUS_TONES[project.status]}>
+            {PROJECT_STATUS_LABELS[project.status] ?? project.status}
+          </Badge>
         }
       />
 
@@ -462,53 +323,26 @@ export default function MpdcProjectMonitoringDetail() {
 
         <ProgramOfWorksSection project={project} />
 
-        <section className="flex items-center justify-between gap-3 rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
-          <div>
-            <h2 className="text-sm font-semibold text-slate-800">Monitoring History</h2>
-            <p className="mt-0.5 text-xs text-slate-400">
-              {updates.length === 0
-                ? 'No monitoring updates reported yet.'
-                : `${updates.length} update${updates.length === 1 ? '' : 's'} reported by Engineering.`}
-            </p>
-          </div>
-          <div className="flex flex-wrap justify-end gap-2">
-            {updates[0] && (imagesByUpdate.get(updates[0].id) ?? []).length > 0 ? (
-              <Button type="button" variant="secondary" size="sm" icon={Images} onClick={() => setCompareUpdateId(updates[0].id)}>
-                Compare latest photos
-              </Button>
-            ) : null}
-            <Button type="button" variant="secondary" size="sm" icon={Clock} onClick={() => setHistoryOpen(true)}>
-              View History
-            </Button>
-          </div>
-        </section>
+        <BeforeAfterSection
+          project={project}
+          images={images}
+          latestProgress={updates[0]?.progress_percentage ?? null}
+          userId={user.id}
+          onPhotosChanged={loadImages}
+          onRequestUpdate={MONITORING_EDITABLE_STATUSES.includes(project.status) ? handleRequestUpdate : null}
+          requestingUpdate={requestingUpdate}
+        />
 
         <ProjectDocumentsList projectId={project.id} />
-
-        <ConfirmedBySection projectId={project.id} />
       </div>
 
-      <LocationModal open={locationOpen} project={project} onClose={() => setLocationOpen(false)} />
-
-      <MonitoringHistoryModal
-        open={historyOpen}
-        onClose={() => setHistoryOpen(false)}
-        updates={updates}
-        imagesByUpdate={imagesByUpdate}
-        onCompare={setCompareUpdateId}
+      <LocationModal
+        open={locationOpen}
+        project={project}
+        procurement={procurement}
+        showDetails
+        onClose={() => setLocationOpen(false)}
       />
-
-      {compareUpdateId && updates.some((entry) => entry.id === compareUpdateId) ? (
-        <UpdateComparisonModal
-          key={compareUpdateId}
-          update={updates.find((entry) => entry.id === compareUpdateId)}
-          updates={updates}
-          images={images}
-          isNew={compareUpdateId === updates[0]?.id}
-          onClose={() => setCompareUpdateId(null)}
-          onAnalyzed={loadUpdates}
-        />
-      ) : null}
     </div>
   )
 }

@@ -1,7 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { AlertTriangle, Camera, CameraOff, Clock, FileWarning, ImagePlus, Images, MapPin, Plus, Send, X } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, FileWarning, MapPin, ScanSearch, Send } from 'lucide-react'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useToast } from '../../hooks/useToast'
 import { useAuth } from '../../hooks/useAuth'
@@ -17,10 +16,10 @@ import { LoadingState } from '@shared/components/ui/LoadingState'
 import EmptyState from '@shared/components/ui/EmptyState'
 import DssPanel from '../../components/ui/DssPanel'
 import LocationModal from '../../components/LocationModal'
-import ConfirmedBySection from '../../components/ConfirmedBySection'
-import ProgramOfWorksSection, { UpdatePowButton } from '../../components/ProgramOfWorksSection'
-import SitePhotoGrid from '../../components/ui/SitePhotoGrid'
-import { formatDate } from '@shared/utils/format'
+import ProgramOfWorksSection from '../../components/ProgramOfWorksSection'
+import BeforeAfterSection from '../../components/BeforeAfterSection'
+import ConfirmNameDialog from '../../components/ConfirmNameDialog'
+import { formatDate, formatDateTime } from '@shared/utils/format'
 import {
   PROJECT_STATUS_LABELS,
   PROJECT_STATUS_TONES,
@@ -28,9 +27,6 @@ import {
   MONITORING_EDITABLE_STATUSES,
 } from '@shared/utils/projectStatus'
 import { evaluateProjectDss } from '@shared/utils/decisionSupport'
-import { processImageFile } from '../../utils/imageProcessing'
-import { analyzeProjectUpdate } from '../../utils/imageAnalysis'
-import { UpdateAnalysisFlag, UpdateComparisonModal } from '../../components/UpdateComparison'
 import { isWithinDonsol } from '@shared/utils/geo'
 import { ROLES } from '../../utils/roles'
 import {
@@ -61,265 +57,21 @@ const EMPTY_FORM = {
   report_date: localToday(),
 }
 
-// Live in-page camera, for taking a fresh site photo on the spot rather than
-// only ever picking an existing file from the gallery (which says nothing
-// about when/where the photo was actually taken). Stays open across
-// multiple captures — a site visit usually produces more than one photo —
-// closed explicitly via Done or Escape. The plain <input type="file"
-// capture="environment"> next to it is kept too, since this getUserMedia
-// path needs a secure context (HTTPS/localhost) and camera permission, and
-// simply won't be available on every device/browser.
-function CameraCapture({ onCapture, onClose }) {
-  const videoRef = useRef(null)
-  const streamRef = useRef(null)
-  const [error, setError] = useState(null)
-  const [shotCount, setShotCount] = useState(0)
-  // Device location while the camera is open, attached to each capture.
-  // A canvas-made JPEG carries no EXIF, so this is the only GPS these photos get.
-  const positionRef = useRef(null)
-  const [locationState, setLocationState] = useState('locating') // locating | ready | unavailable
-  const [accuracy, setAccuracy] = useState(null)
-
-  useEffect(() => {
-    if (!navigator.geolocation) {
-      setLocationState('unavailable')
-      return undefined
-    }
-    const watchId = navigator.geolocation.watchPosition(
-      (position) => {
-        positionRef.current = {
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-          accuracy: position.coords.accuracy,
-        }
-        setAccuracy(position.coords.accuracy)
-        setLocationState('ready')
-      },
-      () => {
-        if (!positionRef.current) setLocationState('unavailable')
-      },
-      { enableHighAccuracy: true, maximumAge: 10000, timeout: 20000 },
-    )
-    return () => navigator.geolocation.clearWatch(watchId)
-  }, [])
-
-  useEffect(() => {
-    let cancelled = false
-
-    async function start() {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment' },
-          audio: false,
-        })
-        if (cancelled) {
-          stream.getTracks().forEach((track) => track.stop())
-          return
-        }
-        streamRef.current = stream
-        if (videoRef.current) videoRef.current.srcObject = stream
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Could not access the camera.')
-      }
-    }
-    start()
-
-    return () => {
-      cancelled = true
-      streamRef.current?.getTracks().forEach((track) => track.stop())
-      streamRef.current = null
-    }
-  }, [])
-
-  useEffect(() => {
-    function handleKeyDown(event) {
-      if (event.key === 'Escape') onClose()
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [onClose])
-
-  function capture() {
-    const video = videoRef.current
-    if (!video || !video.videoWidth) return
-    const canvas = document.createElement('canvas')
-    canvas.width = video.videoWidth
-    canvas.height = video.videoHeight
-    canvas.getContext('2d').drawImage(video, 0, 0)
-    canvas.toBlob(
-      (blob) => {
-        if (!blob) return
-        const file = new File([blob], `site-photo-${Date.now()}.jpg`, { type: 'image/jpeg' })
-        onCapture(file, positionRef.current)
-        setShotCount((count) => count + 1)
-      },
-      'image/jpeg',
-      0.9,
-    )
-  }
-
-  return createPortal(
-    <div className="fixed inset-0 z-1100 flex items-center justify-center bg-slate-950/80 px-4">
-      <div className="w-full max-w-lg overflow-hidden rounded-2xl bg-slate-900 shadow-2xl">
-        <div className="flex items-center justify-between px-4 py-3">
-          <p className="text-sm font-medium text-white">Take Site Photo{shotCount > 0 ? ` (${shotCount} taken)` : ''}</p>
-          <button
-            type="button"
-            aria-label="Close camera"
-            onClick={onClose}
-            className="rounded-md p-1 text-slate-300 hover:bg-white/10 hover:text-white"
-          >
-            <X className="h-5 w-5" aria-hidden="true" />
-          </button>
-        </div>
-
-        {error ? (
-          <div className="flex flex-col items-center gap-2 px-6 py-12 text-center">
-            <CameraOff className="h-8 w-8 text-slate-500" aria-hidden="true" />
-            <p className="text-sm text-slate-300">{error}</p>
-            <p className="text-xs text-slate-500">
-              Use the regular file picker below instead, or check your browser's camera permission.
-            </p>
-          </div>
-        ) : (
-          <video ref={videoRef} autoPlay playsInline muted className="aspect-video w-full bg-black object-cover" />
-        )}
-
-        <p className="flex items-center justify-center gap-1.5 px-4 pt-3 text-xs text-slate-400">
-          <MapPin
-            className={`h-3.5 w-3.5 ${locationState === 'ready' ? 'text-emerald-400' : locationState === 'unavailable' ? 'text-amber-400' : ''}`}
-            aria-hidden="true"
-          />
-          {locationState === 'ready'
-            ? `Location tracked (±${Math.round(accuracy)} m)`
-            : locationState === 'unavailable'
-              ? 'Location unavailable — turn on location and allow access to tag photos'
-              : 'Getting location...'}
-        </p>
-
-        <div className="flex items-center justify-center gap-3 px-4 py-4">
-          <Button type="button" variant="secondary" size="sm" onClick={onClose}>
-            Done
-          </Button>
-          <Button type="button" icon={Camera} onClick={capture} disabled={!!error}>
-            Capture
-          </Button>
-        </div>
-      </div>
-    </div>,
-    document.body,
-  )
-}
-
-// Monitoring History used to render inline on the page, pushing everything
-// below the update form down further with every new entry. Moved into an
-// on-demand modal (same createPortal/backdrop pattern as LocationModal) so
-// the page stays short right after submitting an update, with history just
-// a click away instead of always taking up space.
-function MonitoringHistoryModal({ open, onClose, updates, imagesByUpdate, onCompare }) {
-  useEffect(() => {
-    if (!open) return undefined
-
-    function handleKeyDown(event) {
-      if (event.key === 'Escape') onClose()
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [open, onClose])
-
-  if (!open) return null
-
-  const unassignedImages = imagesByUpdate.get('unassigned') ?? []
-
-  return createPortal(
-    <div className="fixed inset-0 z-1000 flex items-center justify-center px-4">
-      <button
-        type="button"
-        aria-label="Dismiss dialog"
-        onClick={onClose}
-        className="fixed inset-0 bg-blue-950/40 backdrop-blur-sm"
-      />
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="history-modal-title"
-        className="animate-pop-in relative flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-900/5"
+function StepHeading({ number, title, description, done = false }) {
+  return (
+    <div className="mb-3 flex items-start gap-2.5">
+      <span
+        className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${
+          done ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'
+        }`}
       >
-        <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
-          <h2 id="history-modal-title" className="flex items-center gap-2 text-base font-semibold text-slate-800">
-            <Clock className="h-4 w-4 text-blue-600" aria-hidden="true" />
-            Monitoring History
-          </h2>
-          <button
-            type="button"
-            aria-label="Close"
-            onClick={onClose}
-            className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-          >
-            <X className="h-5 w-5" aria-hidden="true" />
-          </button>
-        </div>
-
-        <div className="overflow-y-auto p-5">
-          {updates.length === 0 ? (
-            <p className="text-sm text-slate-500">No monitoring updates yet.</p>
-          ) : (
-            <ul className="space-y-4">
-              {updates.map((entry) => (
-                <li key={entry.id} className="rounded-md border border-slate-100 bg-slate-50 p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="flex items-center gap-2 text-sm font-medium text-slate-800">
-                      {entry.progress_percentage != null ? `${entry.progress_percentage}% complete` : 'Update'}
-                      {entry.id === updates[0]?.id ? <Badge tone="blue">New</Badge> : null}
-                    </span>
-                    <span className="text-xs text-slate-500">{formatDate(entry.report_date)}</span>
-                  </div>
-                  <p className="mt-1 text-xs text-slate-500">by {entry.reporter?.full_name ?? '—'}</p>
-                  <UpdateAnalysisFlag update={entry} />
-                  <UpdatePowButton documents={entry.pow_documents} />
-                  {(imagesByUpdate.get(entry.id) ?? []).length > 0 ? (
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      icon={Images}
-                      className="mt-2"
-                      onClick={() => onCompare(entry.id)}
-                    >
-                      Compare with previous photos
-                    </Button>
-                  ) : null}
-                  {entry.narrative_report ? (
-                    <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{entry.narrative_report}</p>
-                  ) : null}
-                  {entry.issues_encountered ? (
-                    <p className="mt-1 whitespace-pre-wrap text-sm text-red-700">
-                      Issues: {entry.issues_encountered}
-                    </p>
-                  ) : null}
-
-                  {(imagesByUpdate.get(entry.id) ?? []).length > 0 ? (
-                    <div className="mt-3">
-                      <SitePhotoGrid images={imagesByUpdate.get(entry.id)} />
-                    </div>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          )}
-
-          {unassignedImages.length > 0 ? (
-            <div className="mt-6 border-t border-slate-100 pt-4">
-              <h3 className="text-sm font-semibold text-slate-800">Other Site Photos</h3>
-              <div className="mt-3">
-                <SitePhotoGrid images={unassignedImages} />
-              </div>
-            </div>
-          ) : null}
-        </div>
+        {done ? <CheckCircle2 className="h-4 w-4" aria-hidden="true" /> : number}
+      </span>
+      <div>
+        <h3 className="text-sm font-semibold text-slate-800">{title}</h3>
+        <p className="mt-0.5 text-xs text-slate-500">{description}</p>
       </div>
-    </div>,
-    document.body,
+    </div>
   )
 }
 
@@ -335,31 +87,26 @@ export default function ProjectMonitoringDetail() {
   const [images, setImages] = useState([])
   const [latestRequestAt, setLatestRequestAt] = useState(null)
   const [locationOpen, setLocationOpen] = useState(false)
-  const [historyOpen, setHistoryOpen] = useState(false)
-  const [compareUpdateId, setCompareUpdateId] = useState(null)
 
   const draftKey = `monitoring-update:${projectId}`
   const [form, setForm] = useState(() => readDraft(draftKey) ?? EMPTY_FORM)
-  const [photoQueue, setPhotoQueue] = useState([])
-  // Optional revised Program of Works attached to the update. Like photos,
-  // file handles stay out of the draft.
-  const [powFiles, setPowFiles] = useState([])
-  const [powInputKey, setPowInputKey] = useState(0)
-  // Bumped after a POW upload so ProgramOfWorksSection reloads its list.
-  const [powVersion, setPowVersion] = useState(0)
-  // The update form opens as a modal from the "Submit Monitoring Update" button.
-  const [formOpen, setFormOpen] = useState(false)
+  // Progress Report attached to the update. File handles stay out of the
+  // draft.
+  const [reportFiles, setReportFiles] = useState([])
+  const [reportInputKey, setReportInputKey] = useState(0)
   const [submitting, setSubmitting] = useState(false)
-  const [cameraOpen, setCameraOpen] = useState(false)
+  // "Responsible person" dialog, opened by Submit Monitoring Update.
+  const [submitPromptOpen, setSubmitPromptOpen] = useState(false)
+  // Before & After comparisons, reported by BeforeAfterSection. The newest
+  // draft one is what the update is submitted with.
+  const [comparisons, setComparisons] = useState([])
   const { errors, validate, clearError } = useFieldErrors()
   const confirmedBy = useConfirmedBy()
 
   // A site report typed out on a phone in the field is exactly the input
-  // worth not losing to a backgrounded tab. Text fields only: photoQueue
-  // holds File handles from the camera/picker, which can't be serialised or
-  // re-attached, so the queued photos still have to be re-added after a
-  // reload. Submitting resets `form` to EMPTY_FORM, which matches the clean
-  // value here and so clears the stored draft on its own.
+  // worth not losing to a backgrounded tab. Text fields only. Submitting
+  // resets `form` to EMPTY_FORM, which matches the clean value here and so
+  // clears the stored draft on its own.
   useFormDraft(draftKey, form, EMPTY_FORM)
 
   async function loadUpdates() {
@@ -368,7 +115,7 @@ export default function ProjectMonitoringDetail() {
       .select(
         `id, progress_percentage, narrative_report, issues_encountered, report_date, created_at,
          ai_analysis_status, ai_analysis_result,
-         pow_documents:project_documents(id, document_category, file_name, storage_path),
+         report_documents:project_documents(id, document_category, file_name, storage_path),
          reporter:profiles!project_updates_reported_by_fkey(full_name)`,
       )
       .eq('project_id', projectId)
@@ -410,6 +157,7 @@ export default function ProjectMonitoringDetail() {
       .from('project_images')
       .select(
         `id, project_update_id, storage_path, file_name, image_stage, ai_analysis_status, ai_analysis_result, created_at, latitude, longitude,
+         released_at,
          uploader:profiles!project_images_uploaded_by_fkey(full_name)`,
       )
       .eq('project_id', projectId)
@@ -490,39 +238,23 @@ export default function ProjectMonitoringDetail() {
     evaluateDss()
   }, [projectId])
 
-  // Escape closes the update modal, but not mid-submit or while the camera
-  // overlay (which sits above it) is open.
-  useEffect(() => {
-    if (!formOpen || submitting || cameraOpen) return undefined
-
-    function handleKeyDown(event) {
-      if (event.key === 'Escape') setFormOpen(false)
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [formOpen, submitting, cameraOpen])
-
   function updateField(field, value) {
     setForm((current) => ({ ...current, [field]: value }))
     clearError(field === 'progress_percentage' ? 'progress' : field)
   }
 
-  // `gps` is the device location from the in-app camera; picked photos fall
-  // back to their own EXIF GPS at submit time.
-  function addPhotos(fileList, gps = null) {
-    const files = Array.from(fileList ?? [])
-    if (files.length === 0) return
-    setPhotoQueue((current) => [
-      ...current,
-      ...files.map((file) => ({ id: crypto.randomUUID(), file, gps })),
-    ])
-  }
+  // Draft comparison of a draft After photo — the site visit this update is
+  // submitted with (trg_require_draft_comparison checks the same).
+  const draftComparison =
+    comparisons.find(
+      (comparison) =>
+        comparison.released_at === null &&
+        images.some((image) => image.id === comparison.after_image_id && image.released_at === null),
+    ) ?? null
 
-  function removePhoto(id) {
-    setPhotoQueue((current) => current.filter((photo) => photo.id !== id))
-  }
-
-  async function handleSubmitUpdate(event) {
+  // Submit Monitoring Update: checks the form, then asks who is responsible
+  // before anything is sent.
+  function handleSubmitUpdate(event) {
     event.preventDefault()
 
     const progress = Number(form.progress_percentage)
@@ -538,33 +270,48 @@ export default function ProjectMonitoringDetail() {
     ) {
       return
     }
-    if (powFiles.length === 0) {
-      toast.error('Program of Works required', 'Attach the Program of Works this update is measured against.')
+    if (reportFiles.length === 0) {
+      toast.error('Progress Report required', 'Attach the Progress Report for this update.')
       return
     }
-    if (!confirmedBy.require()) return
+    if (!images.some((image) => image.image_stage === 'BEFORE')) {
+      toast.error('Before photo required', 'Upload a BEFORE photo in step 1 first.')
+      return
+    }
+    if (!draftComparison) {
+      toast.error(
+        'Before & After comparison required',
+        'Take an After photo and press Generate in step 1 first.',
+      )
+      return
+    }
+    setSubmitPromptOpen(true)
+  }
 
+  async function submitUpdate(responsiblePerson) {
+    confirmedBy.setName(responsiblePerson)
+    setSubmitPromptOpen(false)
     setSubmitting(true)
     const previousStatus = project.status
 
-    // Every update must carry its Program of Works, so the files go up to
+    // Every update must carry its Progress Report, so the files go up to
     // storage before the update row exists — a failed upload stops the
-    // submission instead of leaving an update without its POW. Same bucket,
-    // table and path scheme as the POW upload in ProjectReviewDetail.jsx;
-    // pdocs_insert_engineering_monitoring_pow allows it while monitoring is
-    // open.
-    const uploadedPow = []
-    for (const file of powFiles) {
+    // submission instead of leaving an update without its report. Same
+    // bucket, table and path scheme as the POW upload in
+    // ProjectReviewDetail.jsx; pdocs_insert_engineering_progress_report
+    // allows it while monitoring is open.
+    const uploadedReports = []
+    for (const file of reportFiles) {
       const path = `${project.id}/${crypto.randomUUID()}-${file.name}`
       const { error: uploadError } = await supabase.storage
         .from('project-documents')
         .upload(path, file, { contentType: file.type || undefined })
       if (uploadError) {
-        toast.error('Could not upload the Program of Works', `${file.name}: ${uploadError.message}`)
+        toast.error('Could not upload the Progress Report', `${file.name}: ${uploadError.message}`)
         setSubmitting(false)
         return
       }
-      uploadedPow.push({ file, path })
+      uploadedReports.push({ file, path })
     }
 
     const { data: newUpdate, error: updateError } = await supabase
@@ -586,92 +333,36 @@ export default function ProjectMonitoringDetail() {
       return
     }
 
-    // Stage is derived instead of picked per photo: the first update's photos
-    // are BEFORE, a 100% update's are AFTER, everything in between DURING.
-    // The public page groups photos by these stages.
-    const photoStage =
-      updates.length === 0 ? 'BEFORE' : Number(form.progress_percentage) === 100 ? 'AFTER' : 'DURING'
+    // The update's photos are the draft After photos and comparison from the
+    // Before & After section: inserting the update links and releases them to
+    // MPDC (trg_release_draft_photos), so nothing is uploaded here.
 
-    const failedPhotos = []
-    let uploadedCount = 0
-    for (const photo of photoQueue) {
-      try {
-        // Fast client-side gate only (format/size/corruption, entirely in
-        // the browser — see src/utils/imageProcessing.js). A rejection here
-        // means the file never gets uploaded or sent to Gemini at all. This
-        // is not the authoritative check: analyze-project-image
-        // independently re-validates the actual downloaded bytes
-        // server-side, since a browser-reported MIME type can't be trusted.
-        const { status: gateStatus, result: gateResult } = await processImageFile(photo.file)
-        if (gateStatus === 'FAILED') {
-          throw new Error(gateResult?.error ?? 'Image could not be validated.')
-        }
-
-        const path = `${project.id}/${newUpdate.id}/${crypto.randomUUID()}-${photo.file.name}`
-        const gps = photo.gps ?? gateResult?.gps ?? null
-
-        const { error: uploadError } = await supabase.storage.from('project-images').upload(path, photo.file)
-        if (uploadError) throw uploadError
-
-        const { error: insertError } = await supabase
-          .from('project_images')
-          .insert({
-            project_id: project.id,
-            project_update_id: newUpdate.id,
-            uploaded_by: user.id,
-            storage_path: path,
-            file_name: photo.file.name,
-            image_stage: photoStage,
-            captured_at: new Date().toISOString(),
-            latitude: gps ? Number(gps.latitude.toFixed(6)) : null,
-            longitude: gps ? Number(gps.longitude.toFixed(6)) : null,
-            // Photos are analyzed together per update (analyze-project-update),
-            // not one by one.
-            ai_analysis_status: 'NOT_APPLICABLE',
-            ai_analysis_result: null,
-          })
-        if (insertError) throw insertError
-        uploadedCount += 1
-      } catch (photoError) {
-        failedPhotos.push(`${photo.file.name}: ${photoError.message}`)
-      }
-    }
-
-    const failedPow = []
-    for (const { file, path } of uploadedPow) {
+    const failedReports = []
+    for (const { file, path } of uploadedReports) {
       const { error: insertError } = await supabase.from('project_documents').insert({
         project_id: project.id,
         project_update_id: newUpdate.id,
         uploaded_by: user.id,
-        document_category: 'PROGRAM_OF_WORKS',
-        title: `Program of Works — ${project.project_code}`,
+        document_category: 'PROGRESS_REPORT',
+        title: `Progress Report — ${project.project_code}`,
         storage_path: path,
         file_name: file.name,
       })
-      if (insertError) failedPow.push(`${file.name}: ${insertError.message}`)
+      if (insertError) failedReports.push(`${file.name}: ${insertError.message}`)
     }
-    if (uploadedPow.length > failedPow.length) setPowVersion((current) => current + 1)
 
-    await confirmedBy.record(project.id, `Submitted a monitoring update (${Number(form.progress_percentage)}% progress)`)
+    await confirmedBy.record(
+      project.id,
+      `Submitted a monitoring update (${Number(form.progress_percentage)}% progress)`,
+      responsiblePerson,
+    )
     setForm(EMPTY_FORM)
-    setFormOpen(false)
-    setPhotoQueue([])
-    setPowFiles([])
-    setPowInputKey((current) => current + 1)
+    setReportFiles([])
+    setReportInputKey((current) => current + 1)
     setSubmitting(false)
 
-    if (failedPhotos.length > 0) {
-      toast.error('Update saved, but some photos failed to upload', failedPhotos.join('; '))
-    }
-    if (failedPow.length > 0) {
-      toast.error('Update saved, but the Program of Works failed to upload', failedPow.join('; '))
-    }
-
-    // Fire-and-forget: compares the new photos with every earlier update's.
-    // Advisory only — it must never block or fail the monitoring update,
-    // which is already saved. The history list picks up the result.
-    if (uploadedCount > 0) {
-      analyzeProjectUpdate(newUpdate.id).then(() => loadUpdates())
+    if (failedReports.length > 0) {
+      toast.error('Update saved, but the Progress Report failed to upload', failedReports.join('; '))
     }
 
     const refreshed = await loadProject()
@@ -680,7 +371,7 @@ export default function ProjectMonitoringDetail() {
         'Monitoring update recorded',
         `Project status advanced to ${PROJECT_STATUS_LABELS[refreshed.status] ?? refreshed.status}.`,
       )
-    } else if (failedPhotos.length === 0 && failedPow.length === 0) {
+    } else if (failedReports.length === 0) {
       // The form only opens for an open MPDC request, so every submission
       // answers one — the notify_update_request_answered trigger notifies MPDC.
       toast.success('Monitoring update recorded', 'MPDC has been notified.')
@@ -728,14 +419,23 @@ export default function ProjectMonitoringDetail() {
   )
   const updateRequest = getUpdateRequestStatus(latestRequestAt, lastUpdateAt)
   const updateRequested = Boolean(updateRequest)
+  const hasBeforePhoto = images.some((image) => image.image_stage === 'BEFORE')
   const requestOverdue = updateRequest && updateRequest.state !== 'PENDING'
   const dssDecision = evaluateProjectDss(project, updates)
-  const imagesByUpdate = images.reduce((map, image) => {
-    const key = image.project_update_id ?? 'unassigned'
-    if (!map.has(key)) map.set(key, [])
-    map.get(key).push(image)
-    return map
-  }, new Map())
+
+  const beforeAfter = (
+    <BeforeAfterSection
+      project={project}
+      images={images}
+      latestProgress={updates[0]?.progress_percentage ?? null}
+      userId={user.id}
+      confirmedBy={confirmedBy}
+      updateRequested={editable && updateRequested}
+      onPhotosChanged={loadImages}
+      onComparisonsChange={setComparisons}
+      embedded={editable && updateRequested}
+    />
+  )
 
   return (
     <div>
@@ -766,7 +466,13 @@ export default function ProjectMonitoringDetail() {
       <div className="space-y-6">
         <DssPanel decision={dssDecision} />
 
-        <ProgramOfWorksSection key={powVersion} project={project} />
+        <ProgramOfWorksSection project={project} />
+
+        {/* Without an open request, Before & After stands on its own: the
+            Before baseline can be uploaded ahead of any request, a COMPLETED
+            project's finished photos are taken and released here, and past
+            comparisons stay viewable. */}
+        {editable && updateRequested ? null : beforeAfter}
 
         {editable && updateRequested ? (
           <section
@@ -804,10 +510,153 @@ export default function ProjectMonitoringDetail() {
                   </p>
                 </div>
               </div>
-              <Button type="button" size="sm" icon={Plus} onClick={() => setFormOpen(true)}>
-                Submit Monitoring Update
-              </Button>
             </div>
+
+            {/* One site visit, one card: the photos and comparison first,
+                then the update they are submitted with. */}
+            <div className="mt-4 border-t border-slate-200/70 pt-4">
+              <StepHeading
+                number={1}
+                title="Site photos — Before & After"
+                description="Take an After photo of the site, then press Generate to compare it with the Before photo."
+                done={Boolean(draftComparison)}
+              />
+              {beforeAfter}
+            </div>
+
+            <form onSubmit={handleSubmitUpdate} className="mt-5 border-t border-slate-200/70 pt-4">
+              <StepHeading
+                number={2}
+                title="Update details"
+                description="Progress, report and Program of Works, sent to MPDC together with the comparison above."
+              />
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label htmlFor="progress" className="mb-1 block text-sm font-medium text-slate-700">
+                    Progress (%) *
+                  </label>
+                  <input
+                    id="progress"
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="1"
+                    value={form.progress_percentage}
+                    onChange={(event) => updateField('progress_percentage', event.target.value)}
+                    className={inputClass + invalidClass(errors.progress)}
+                  />
+                  <FieldError message={errors.progress} />
+                </div>
+
+                <div>
+                  <label htmlFor="report_date" className="mb-1 block text-sm font-medium text-slate-700">
+                    Report Date *
+                  </label>
+                  <input
+                    id="report_date"
+                    type="date"
+                    max={localToday()}
+                    value={form.report_date}
+                    onChange={(event) => updateField('report_date', event.target.value)}
+                    className={inputClass + invalidClass(errors.report_date)}
+                  />
+                  <FieldError message={errors.report_date} />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label htmlFor="narrative_report" className="mb-1 block text-sm font-medium text-slate-700">
+                    Narrative Report
+                  </label>
+                  <textarea
+                    id="narrative_report"
+                    rows={3}
+                    value={form.narrative_report}
+                    onChange={(event) => updateField('narrative_report', event.target.value)}
+                    className={textareaClass}
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label htmlFor="issues_encountered" className="mb-1 block text-sm font-medium text-slate-700">
+                    Issues Encountered
+                  </label>
+                  <textarea
+                    id="issues_encountered"
+                    rows={2}
+                    value={form.issues_encountered}
+                    onChange={(event) => updateField('issues_encountered', event.target.value)}
+                    className={textareaClass}
+                  />
+                </div>
+              </div>
+
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <div className="rounded-md border border-slate-200 bg-slate-50 p-4">
+                  <label htmlFor="progress_report_file" className="block text-sm font-medium text-slate-700">
+                    Progress Report *
+                  </label>
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    Attach the Progress Report for this update — the work done per Program of Works item.
+                  </p>
+                  <input
+                    key={reportInputKey}
+                    id="progress_report_file"
+                    type="file"
+                    multiple
+                    onChange={(event) => setReportFiles(Array.from(event.target.files ?? []))}
+                    className="mt-2 block w-full text-sm text-slate-600 file:mr-3 file:cursor-pointer file:rounded-md file:border file:border-slate-300 file:bg-white file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-50"
+                  />
+                </div>
+
+                {/* The site photos of this update: the draft After photo and
+                    comparison from Before & After, sent along on submit. */}
+                <div
+                  className={`rounded-md border p-4 ${
+                    draftComparison ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'
+                  }`}
+                >
+                  <p className="flex items-center gap-1.5 text-sm font-medium text-slate-700">
+                    <ScanSearch className="h-4 w-4 text-blue-600" aria-hidden="true" />
+                    Before &amp; After comparison *
+                  </p>
+                  {draftComparison ? (
+                    <p className="mt-1 flex items-start gap-1.5 text-sm text-emerald-800">
+                      <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                      <span>
+                        Attached: {Number(draftComparison.accuracy).toFixed(1)}% match accuracy, generated{' '}
+                        {formatDateTime(draftComparison.created_at)}. MPDC sees it once this update is submitted.
+                      </span>
+                    </p>
+                  ) : (
+                    <p className="mt-1 flex items-start gap-1.5 text-sm text-amber-800">
+                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                      {hasBeforePhoto
+                        ? 'Take an After photo and press Generate in step 1 above.'
+                        : 'Upload a Before photo in step 1 above first.'}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="mt-4 flex justify-end">
+                <Button
+                  type="submit"
+                  icon={Send}
+                  loading={submitting}
+                  disabled={
+                    form.progress_percentage === '' ||
+                    Number(form.progress_percentage) < 0 ||
+                    Number(form.progress_percentage) > 100 ||
+                    !form.report_date ||
+                    reportFiles.length === 0 ||
+                    !hasBeforePhoto ||
+                    !draftComparison
+                  }
+                >
+                  Submit Monitoring Update
+                </Button>
+              </div>
+            </form>
           </section>
         ) : editable ? (
           <section className="rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
@@ -822,256 +671,19 @@ export default function ProjectMonitoringDetail() {
             </p>
           </section>
         )}
-
-        <section className="flex items-center justify-between gap-3 rounded-xl border border-slate-200/70 bg-white shadow-sm shadow-slate-200/60 p-5">
-          <div>
-            <h2 className="text-sm font-semibold text-slate-800">Monitoring History</h2>
-            <p className="mt-0.5 text-xs text-slate-500">
-              {updates.length === 0
-                ? 'No monitoring updates yet.'
-                : `${updates.length} update${updates.length === 1 ? '' : 's'} recorded.`}
-            </p>
-          </div>
-          <div className="flex flex-wrap justify-end gap-2">
-            {updates[0] && (imagesByUpdate.get(updates[0].id) ?? []).length > 0 ? (
-              <Button type="button" variant="secondary" size="sm" icon={Images} onClick={() => setCompareUpdateId(updates[0].id)}>
-                Compare latest photos
-              </Button>
-            ) : null}
-            <Button type="button" variant="secondary" size="sm" icon={Clock} onClick={() => setHistoryOpen(true)}>
-              View History
-            </Button>
-          </div>
-        </section>
-
-        <ConfirmedBySection
-          projectId={project.id}
-          confirmedBy={editable ? confirmedBy : null}
-          refreshKey={confirmedBy.refreshKey}
-        />
       </div>
 
       <LocationModal open={locationOpen} project={project} onClose={() => setLocationOpen(false)} />
 
-      <MonitoringHistoryModal
-        open={historyOpen}
-        onClose={() => setHistoryOpen(false)}
-        updates={updates}
-        imagesByUpdate={imagesByUpdate}
-        onCompare={setCompareUpdateId}
-      />
-
-      {compareUpdateId && updates.some((entry) => entry.id === compareUpdateId) ? (
-        <UpdateComparisonModal
-          key={compareUpdateId}
-          update={updates.find((entry) => entry.id === compareUpdateId)}
-          updates={updates}
-          images={images}
-          isNew={compareUpdateId === updates[0]?.id}
-          onClose={() => setCompareUpdateId(null)}
-          onAnalyzed={loadUpdates}
-        />
-      ) : null}
-
-      {formOpen && editable && updateRequested
-        ? createPortal(
-            <div className="fixed inset-0 z-1000 flex items-center justify-center px-4">
-              <button
-                type="button"
-                aria-label="Dismiss dialog"
-                onClick={() => !submitting && setFormOpen(false)}
-                className="fixed inset-0 bg-blue-950/40 backdrop-blur-sm"
-              />
-              <form
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="update-modal-title"
-                onSubmit={handleSubmitUpdate}
-                className="animate-pop-in relative flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-900/5"
-              >
-                <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
-                  <h2 id="update-modal-title" className="flex items-center gap-2 text-base font-semibold text-slate-800">
-                    <Send className="h-4 w-4 text-blue-600" aria-hidden="true" />
-                    New Monitoring Update
-                  </h2>
-                  <button
-                    type="button"
-                    aria-label="Close"
-                    onClick={() => setFormOpen(false)}
-                    disabled={submitting}
-                    className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-                  >
-                    <X className="h-5 w-5" aria-hidden="true" />
-                  </button>
-                </div>
-
-                <div className="overflow-y-auto px-5 py-4">
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div>
-                      <label htmlFor="progress" className="mb-1 block text-sm font-medium text-slate-700">
-                        Progress (%) *
-                      </label>
-                      <input
-                        id="progress"
-                        type="number"
-                        min="0"
-                        max="100"
-                        step="1"
-                        value={form.progress_percentage}
-                        onChange={(event) => updateField('progress_percentage', event.target.value)}
-                        className={inputClass + invalidClass(errors.progress)}
-                      />
-                      <FieldError message={errors.progress} />
-                    </div>
-
-                    <div>
-                      <label htmlFor="report_date" className="mb-1 block text-sm font-medium text-slate-700">
-                        Report Date *
-                      </label>
-                      <input
-                        id="report_date"
-                        type="date"
-                        max={localToday()}
-                        value={form.report_date}
-                        onChange={(event) => updateField('report_date', event.target.value)}
-                        className={inputClass + invalidClass(errors.report_date)}
-                      />
-                      <FieldError message={errors.report_date} />
-                    </div>
-
-                    <div className="sm:col-span-2">
-                      <label htmlFor="narrative_report" className="mb-1 block text-sm font-medium text-slate-700">
-                        Narrative Report
-                      </label>
-                      <textarea
-                        id="narrative_report"
-                        rows={3}
-                        value={form.narrative_report}
-                        onChange={(event) => updateField('narrative_report', event.target.value)}
-                        className={textareaClass}
-                      />
-                    </div>
-
-                    <div className="sm:col-span-2">
-                      <label htmlFor="issues_encountered" className="mb-1 block text-sm font-medium text-slate-700">
-                        Issues Encountered
-                      </label>
-                      <textarea
-                        id="issues_encountered"
-                        rows={2}
-                        value={form.issues_encountered}
-                        onChange={(event) => updateField('issues_encountered', event.target.value)}
-                        className={textareaClass}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="mt-5 rounded-md border border-slate-200 bg-slate-50 p-4">
-                    <div>
-                      <span className="block text-sm font-medium text-slate-700">Site Photos</span>
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {/* No `capture` attribute, so phones open the photo gallery;
-                            Take Photo covers the camera. */}
-                        <label
-                          htmlFor="photos"
-                          className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                        >
-                          <ImagePlus className="h-4 w-4" aria-hidden="true" />
-                          Choose Photos
-                        </label>
-                        <input
-                          id="photos"
-                          type="file"
-                          accept="image/*"
-                          multiple
-                          onChange={(event) => {
-                            addPhotos(event.target.files)
-                            // Lets the same photo be picked again after removing it.
-                            event.target.value = ''
-                          }}
-                          className="sr-only"
-                        />
-                        <Button type="button" variant="secondary" size="sm" icon={Camera} onClick={() => setCameraOpen(true)}>
-                          Take Photo
-                        </Button>
-                      </div>
-                    </div>
-
-                    {photoQueue.length > 0 ? (
-                      <ul className="mt-3 space-y-2">
-                        {photoQueue.map((photo) => (
-                          <li
-                            key={photo.id}
-                            className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-200 bg-white px-3 py-2"
-                          >
-                            <span className="flex items-center gap-2 text-sm text-slate-700">
-                              <Camera className="h-4 w-4 text-slate-400" aria-hidden="true" />
-                              {photo.file.name}
-                              {photo.gps ? (
-                                <MapPin className="h-3.5 w-3.5 text-emerald-600" aria-label="Location tagged" />
-                              ) : null}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => removePhoto(photo.id)}
-                              className="text-slate-400 hover:text-red-600"
-                              aria-label={`Remove ${photo.file.name}`}
-                            >
-                              <X className="h-4 w-4" />
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : null}
-                  </div>
-
-                  <div className="mt-5 rounded-md border border-slate-200 bg-slate-50 p-4">
-                    <label htmlFor="pow_file" className="block text-sm font-medium text-slate-700">
-                      Program of Works *
-                    </label>
-                    <p className="mt-0.5 text-xs text-slate-500">
-                      Attach the Program of Works this update's progress is based on. Earlier versions stay on file.
-                    </p>
-                    <input
-                      key={powInputKey}
-                      id="pow_file"
-                      type="file"
-                      multiple
-                      onChange={(event) => setPowFiles(Array.from(event.target.files ?? []))}
-                      className="mt-2 block w-full text-sm text-slate-600 file:mr-3 file:cursor-pointer file:rounded-md file:border file:border-slate-300 file:bg-white file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-50"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 px-5 py-4">
-                  <Button type="button" variant="secondary" onClick={() => setFormOpen(false)} disabled={submitting}>
-                    Cancel
-                  </Button>
-                  <Button
-                    type="submit"
-                    icon={Send}
-                    loading={submitting}
-                    disabled={
-                      form.progress_percentage === '' ||
-                      Number(form.progress_percentage) < 0 ||
-                      Number(form.progress_percentage) > 100 ||
-                      !form.report_date ||
-                      powFiles.length === 0
-                    }
-                  >
-                    Submit Update
-                  </Button>
-                </div>
-              </form>
-            </div>,
-            document.body,
-          )
-        : null}
-
-      {cameraOpen ? (
-        <CameraCapture
-          onCapture={(file, gps) => addPhotos([file], gps)}
-          onClose={() => setCameraOpen(false)}
+      {submitPromptOpen ? (
+        <ConfirmNameDialog
+          title="Responsible person"
+          description="Who is responsible for this monitoring update? The name is recorded with the update sent to MPDC."
+          confirmLabel="Submit to MPDC"
+          confirmIcon={Send}
+          initialName={confirmedBy.name}
+          onConfirm={submitUpdate}
+          onCancel={() => setSubmitPromptOpen(false)}
         />
       ) : null}
     </div>

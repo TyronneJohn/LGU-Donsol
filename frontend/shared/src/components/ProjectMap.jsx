@@ -2,7 +2,7 @@ import { Component, useEffect, useMemo, useState } from 'react'
 import { GeoJSON, LayersControl, MapContainer, Marker, TileLayer, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { AlertTriangle, MapPin, X } from 'lucide-react'
+import { AlertTriangle, Building2, MapPin, Wallet, X } from 'lucide-react'
 import Badge from './ui/Badge'
 import { formatCurrency } from '../utils/format'
 import { getFlagTone } from '../utils/decisionSupport'
@@ -225,6 +225,117 @@ function ProjectDetailsCard({ project, onClose, footer }) {
   )
 }
 
+// Width of ProjectDetailsPanel from `sm` up (sm:w-80).
+const PANEL_WIDTH = 320
+
+// Larger variant of the details card, used when the caller supplies media
+// (the public site's pin photo gallery): a full-height panel docked to the
+// right of the map from `sm` up, a bottom sheet over the lower part of the
+// map on phones. Header stays put; the body scrolls.
+function ProjectDetailsPanel({ project, onClose, media, footer }) {
+  const progress = project.progress_percentage != null ? Number(project.progress_percentage) : null
+  const location = [project.barangay ? `Brgy. ${project.barangay}` : null, project.location_text]
+    .filter(Boolean)
+    .join(' · ')
+
+  return (
+    <section
+      aria-label="Project details"
+      className="animate-pop-in absolute inset-x-0 bottom-0 z-1000 flex max-h-[65%] flex-col overflow-hidden rounded-t-xl bg-white shadow-2xl ring-1 ring-slate-900/10 sm:inset-y-0 sm:left-auto sm:max-h-none sm:w-80 sm:rounded-tr-none sm:rounded-bl-xl"
+    >
+      <div className="shrink-0 border-b border-slate-100 px-4 pb-3 pt-3.5">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold wrap-break-word text-slate-800">{project.title}</p>
+            <p className="text-xs text-slate-500">{project.project_code}</p>
+          </div>
+          <button
+            type="button"
+            aria-label="Close project details"
+            onClick={onClose}
+            className="-m-1 shrink-0 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <Badge tone={PROJECT_STATUS_TONES[project.status]}>
+            {PROJECT_STATUS_LABELS[project.status] ?? project.status}
+          </Badge>
+          {project.procurement_status ? (
+            <Badge tone={PROCUREMENT_STATUS_TONES[project.procurement_status]}>
+              {PROCUREMENT_STATUS_LABELS[project.procurement_status] ?? project.procurement_status}
+            </Badge>
+          ) : null}
+        </div>
+        {progress !== null ? (
+          <div className="mt-2.5">
+            <div className="mb-1 flex justify-between text-[11px] text-slate-500">
+              <span>Accomplishment</span>
+              <span className="font-semibold text-slate-700">{progress.toFixed(0)}%</span>
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+              <div className="h-full rounded-full bg-emerald-500" style={{ width: `${progress}%` }} />
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+        {media}
+        <dl className="mt-3 space-y-1.5 text-xs text-slate-600">
+          {location ? (
+            <div className="flex items-start gap-2">
+              <dt>
+                <MapPin className="h-3.5 w-3.5 text-slate-400" aria-label="Location" />
+              </dt>
+              <dd>{location}</dd>
+            </div>
+          ) : null}
+          <div className="flex items-start gap-2">
+            <dt>
+              <Wallet className="h-3.5 w-3.5 text-slate-400" aria-label="Budget" />
+            </dt>
+            <dd className="tabular-nums">{formatCurrency(project.approved_budget ?? project.estimated_cost)}</dd>
+          </div>
+          {project.offices?.name ? (
+            <div className="flex items-start gap-2">
+              <dt>
+                <Building2 className="h-3.5 w-3.5 text-slate-400" aria-label="Office" />
+              </dt>
+              <dd>{project.offices.name}</dd>
+            </div>
+          ) : null}
+        </dl>
+        {footer ? <div className="mt-3 border-t border-slate-100 pt-3">{footer}</div> : null}
+      </div>
+    </section>
+  )
+}
+
+// With ProjectDetailsPanel open, pans the selected pin to the middle of the
+// map area the panel leaves uncovered (left of it from `sm` up, above the
+// bottom sheet on phones) so the panel never hides the pin it describes.
+function KeepPinVisible({ position }) {
+  const map = useMap()
+  const [lat, lng] = position
+
+  useEffect(() => {
+    const size = map.getSize()
+    const point = map.latLngToContainerPoint([lat, lng])
+    if (window.matchMedia('(min-width: 640px)').matches) {
+      map.panBy([point.x - (size.x - PANEL_WIDTH) / 2, 0])
+    } else {
+      // Bottom sheet covers up to 65%; aim a bit below the middle of the
+      // remaining strip since the pin's anchor is its tip.
+      const visible = size.y * 0.35
+      map.panBy([0, point.y - visible * 0.65])
+    }
+  }, [map, lat, lng])
+
+  return null
+}
+
 // Defensive correction, kept in addition to MapContainer's own
 // project-derived initial center/zoom (below) — not the primary way this
 // centers anymore. Also guards against a well-known Leaflet-in-a-modal
@@ -297,11 +408,21 @@ class MapErrorBoundary extends Component {
  *   `procurement_status`, `progress_percentage`, `flags`.
  * @param {string} [height]
  * @param {(project: object) => import('react').ReactNode} [renderCardFooter] -
- *   optional extra content at the bottom of a clicked pin's details card
- *   (the public site puts its "View Project Photos" button here).
+ *   optional extra content at the bottom of a clicked pin's details card.
+ * @param {(project: object) => import('react').ReactNode} [renderCardMedia] -
+ *   optional media (the public site's pin photo gallery). When given, a
+ *   clicked pin opens the larger ProjectDetailsPanel instead of the card.
  */
-export default function ProjectMap({ projects, height = '520px', renderCardFooter }) {
-  const points = useMemo(() => projects.map((p) => [Number(p.latitude), Number(p.longitude)]), [projects])
+export default function ProjectMap({ projects, height = '520px', renderCardFooter, renderCardMedia }) {
+  // Keyed on the coordinates themselves, not the `projects` array: callers
+  // often pass a fresh array each render, and a new `points` would make
+  // FitToMarkers re-center the map, undoing the user's pan (and
+  // KeepPinVisible's) every time the parent re-renders.
+  const coordKey = projects.map((p) => `${p.latitude},${p.longitude}`).join('|')
+  const points = useMemo(
+    () => (coordKey ? coordKey.split('|').map((pair) => pair.split(',').map(Number)) : []),
+    [coordKey],
+  )
   // Closed until a pin is clicked. Looked up by id so a stale selection from
   // a previously shown project simply resolves to nothing.
   const [selectedId, setSelectedId] = useState(null)
@@ -394,6 +515,9 @@ export default function ProjectMap({ projects, height = '520px', renderCardFoote
           ))}
           <FitToMarkers points={points} />
           <ClearSelectionOnMapClick onClear={() => setSelectedId(null)} />
+          {renderCardMedia && selectedProject ? (
+            <KeepPinVisible position={[Number(selectedProject.latitude), Number(selectedProject.longitude)]} />
+          ) : null}
           {projects.map((project) => {
             const selected = project.id === selectedId
             return (
@@ -410,7 +534,14 @@ export default function ProjectMap({ projects, height = '520px', renderCardFoote
         </MapContainer>
         {/* Sibling of MapContainer, not a child: keeps the card's own
             clicks/scrolls from ever reaching Leaflet as map pans or zooms. */}
-        {selectedProject ? (
+        {selectedProject && renderCardMedia ? (
+          <ProjectDetailsPanel
+            project={selectedProject}
+            onClose={() => setSelectedId(null)}
+            media={renderCardMedia(selectedProject)}
+            footer={renderCardFooter?.(selectedProject)}
+          />
+        ) : selectedProject ? (
           <ProjectDetailsCard
             project={selectedProject}
             onClose={() => setSelectedId(null)}
