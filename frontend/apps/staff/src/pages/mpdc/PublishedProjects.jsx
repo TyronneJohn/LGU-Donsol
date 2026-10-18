@@ -265,7 +265,7 @@ export default function PublishedProjects() {
                 <th className="px-4 py-2.5 font-medium">Status</th>
                 <th className="px-4 py-2.5 font-medium">Visibility</th>
                 <th className="px-4 py-2.5 font-medium">Published</th>
-                <th className="px-4 py-2.5 font-medium" />
+                <th className="px-4 py-2.5 font-medium">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -289,7 +289,7 @@ export default function PublishedProjects() {
                       <Badge tone={isPublic ? 'green' : 'neutral'}>{isPublic ? 'Public' : 'Private'}</Badge>
                     </td>
                     <td className="px-4 py-2.5 text-slate-600">{formatDate(project.published_at)}</td>
-                    <td className="px-4 py-2.5 text-right">
+                    <td className="px-4 py-2.5">
                       {canToggle ? (
                         <Button
                           variant={isPublic ? 'secondary' : 'primary'}

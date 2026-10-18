@@ -199,8 +199,8 @@ export default function SiteMonitoring() {
                 <th className="px-4 py-2.5 font-medium">Progress</th>
                 <th className="px-4 py-2.5 font-medium">Last Update</th>
                 <th className="px-4 py-2.5 font-medium">MPDC Request</th>
-                <th className="px-4 py-2.5 font-medium">DSS Decision</th>
-                <th className="px-4 py-2.5 text-right font-medium">Action</th>
+                <th className="px-4 py-2.5 font-medium">DSS</th>
+                <th className="px-4 py-2.5 font-medium">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -246,8 +246,8 @@ export default function SiteMonitoring() {
                       <span className="text-slate-400">—</span>
                     )}
                   </td>
-                  <td className="px-4 py-2.5 text-right">
-                    <div className="flex justify-end gap-2">
+                  <td className="px-4 py-2.5">
+                    <div className="flex gap-2">
                       <Button to={`/engineering/monitoring/${project.id}`} variant="secondary" size="sm">
                         View
                       </Button>

@@ -152,7 +152,7 @@ export default function BacProcurement() {
                 <th className="px-4 py-2.5 font-medium">ABC</th>
                 <th className="px-4 py-2.5 font-medium">Contractor</th>
                 <th className="px-4 py-2.5 font-medium">Opened</th>
-                <th className="px-4 py-2.5 text-right font-medium">Action</th>
+                <th className="px-4 py-2.5 font-medium">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -173,7 +173,7 @@ export default function BacProcurement() {
                   <td className="px-4 py-2.5 text-slate-600">{formatCurrency(row.abc_amount)}</td>
                   <td className="px-4 py-2.5 text-slate-600">{row.contractors?.name ?? '—'}</td>
                   <td className="px-4 py-2.5 text-slate-600">{row.created_at ? formatDate(row.created_at) : '—'}</td>
-                  <td className="px-4 py-2.5 text-right">
+                  <td className="px-4 py-2.5">
                     <Button to={`/bac/procurement/${row.project_id}`} variant="secondary" size="sm">
                       {row.status ? 'View' : 'Start Procurement'}
                     </Button>

@@ -68,7 +68,7 @@ export default function ProjectReview() {
                 <th className="px-4 py-2.5 font-medium">Submitted By</th>
                 <th className="px-4 py-2.5 font-medium">Approved Budget</th>
                 <th className="px-4 py-2.5 font-medium">Submitted</th>
-                <th className="px-4 py-2.5 font-medium" />
+                <th className="px-4 py-2.5 font-medium">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -80,7 +80,7 @@ export default function ProjectReview() {
                   <td className="px-4 py-2.5 text-slate-600">{project.creator?.full_name ?? '—'}</td>
                   <td className="px-4 py-2.5 text-slate-600">{formatCurrency(project.approved_budget ?? project.estimated_cost)}</td>
                   <td className="px-4 py-2.5 text-slate-600">{formatDate(project.created_at)}</td>
-                  <td className="px-4 py-2.5 text-right">
+                  <td className="px-4 py-2.5">
                     <Button to={`/engineering/review/${project.id}`} variant="secondary" size="sm" icon={ArrowRight}>
                       Review
                     </Button>

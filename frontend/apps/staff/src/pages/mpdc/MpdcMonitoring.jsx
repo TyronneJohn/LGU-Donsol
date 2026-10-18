@@ -153,8 +153,8 @@ export default function MpdcMonitoring() {
                 <th className="px-4 py-2.5 font-medium">Status</th>
                 <th className="px-4 py-2.5 font-medium">Progress</th>
                 <th className="px-4 py-2.5 font-medium">Last Update</th>
-                <th className="px-4 py-2.5 font-medium">DSS Decision</th>
-                <th className="px-4 py-2.5 text-right font-medium">Action</th>
+                <th className="px-4 py-2.5 font-medium">DSS</th>
+                <th className="px-4 py-2.5 font-medium">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -185,7 +185,7 @@ export default function MpdcMonitoring() {
                       <span className="text-slate-400">—</span>
                     )}
                   </td>
-                  <td className="px-4 py-2.5 text-right">
+                  <td className="px-4 py-2.5">
                     <Button to={`/mpdc/monitoring/${project.id}`} variant="secondary" size="sm">
                       View
                     </Button>

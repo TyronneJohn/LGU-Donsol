@@ -1,13 +1,13 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { ArrowLeft, ChevronDown, ChevronUp, ExternalLink, FileText, FolderKanban, Paperclip, Search, Send, Upload, X } from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronUp, ExternalLink, FileText, FolderKanban, Paperclip, Reply, Search, Send, Upload, X } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { supabase } from '@shared/lib/supabaseClient'
 import { useAuth } from '../../hooks/useAuth'
 import { useToast } from '../../hooks/useToast'
 import { useDismissablePopover } from '../../hooks/useDismissablePopover'
 import { useFormDraft, readDraft } from '../../hooks/useFormDraft'
-import { useOnlineRoles } from '../../hooks/useOnlineRoles'
+import { usePresence } from '../../hooks/useOnlineRoles'
 import PageHeader from '../../components/ui/PageHeader'
 import OnlineDot from '../../components/ui/OnlineDot'
 import Button from '../../components/ui/Button'
@@ -15,7 +15,7 @@ import Badge from '@shared/components/ui/Badge'
 import { LoadingState, Spinner } from '@shared/components/ui/LoadingState'
 import EmptyState from '@shared/components/ui/EmptyState'
 import { ROLES, ROLE_LABELS, ROLE_HOME_PATH } from '../../utils/roles'
-import { formatCurrency, formatDate, formatDateTime, formatRelativeTime } from '@shared/utils/format'
+import { formatCurrency, formatDate, formatDateTime, formatLastSeen, formatRelativeTime } from '@shared/utils/format'
 import {
   PROJECT_STATUS_LABELS,
   PROJECT_STATUS_TONES,
@@ -25,7 +25,7 @@ import {
 } from '@shared/utils/projectStatus'
 
 const MESSAGE_SELECT = `
-  id, body, project_id, sender_id, sender_role, recipient_role, is_read, read_at, created_at,
+  id, body, project_id, reply_to_id, sender_id, sender_role, recipient_role, is_read, read_at, created_at,
   attachment_path, attachment_name, attachment_type, attachment_size,
   sender:profiles!messages_sender_id_fkey(full_name),
   project:projects(id, project_code, title)
@@ -42,6 +42,14 @@ function senderDisplayName(message) {
   const name = message.sender?.full_name?.trim()
   if (!name) return ROLE_LABELS[message.sender_role]
   return name.includes('@') ? name.split('@')[0] : name
+}
+
+// What a reply quote shows of its original: the text, or the file name when
+// it was a file-only message. Projects are left out to keep quotes short.
+function replySnippet(message) {
+  if (message.body) return message.body
+  if (message.attachment_name) return `📎 ${message.attachment_name}`
+  return 'Message'
 }
 
 // Local calendar day, so the "Today"/"Yesterday" separators follow the
@@ -90,7 +98,7 @@ export default function Messaging() {
   const [searchParams, setSearchParams] = useSearchParams()
 
   const otherRoles = useMemo(() => Object.values(ROLES).filter((value) => value !== role), [role])
-  const onlineRoles = useOnlineRoles()
+  const { onlineRoles, lastSeenByRole } = usePresence()
 
   const [messages, setMessages] = useState([])
   const [loading, setLoading] = useState(true)
@@ -117,6 +125,12 @@ export default function Messaging() {
   }, [composerDraftKey])
   const [attachedProject, setAttachedProject] = useState(null)
   const [attachedFile, setAttachedFile] = useState(null)
+  // The message being replied to, if any. Only ever one in the open
+  // conversation, so switching offices drops it.
+  const [replyingTo, setReplyingTo] = useState(null)
+  useEffect(() => {
+    setReplyingTo(null)
+  }, [selectedRole])
   const [projectPanel, setProjectPanel] = useState(null)
   const [projectPanelLoading, setProjectPanelLoading] = useState(false)
 
@@ -275,6 +289,7 @@ export default function Messaging() {
         sender_role: role,
         recipient_role: selectedRole,
         project_id: attachedProject?.id ?? null,
+        reply_to_id: replyingTo?.id ?? null,
         body: trimmed,
         ...attachment,
       })
@@ -292,6 +307,7 @@ export default function Messaging() {
     setDraft('')
     setAttachedProject(null)
     setAttachedFile(null)
+    setReplyingTo(null)
     setSending(false)
 
     const preview = trimmed || `Sent a file: ${inserted.attachment_name}`
@@ -387,6 +403,7 @@ export default function Messaging() {
             role={role}
             selectedRole={selectedRole}
             isOnline={onlineRoles.has(selectedRole)}
+            lastSeen={lastSeenByRole.get(selectedRole)}
             bucket={activeBucket}
             draft={draft}
             onDraftChange={setDraft}
@@ -399,6 +416,9 @@ export default function Messaging() {
             attachedFile={attachedFile}
             onPickFile={pickFile}
             onClearFile={() => setAttachedFile(null)}
+            replyingTo={replyingTo}
+            onReply={setReplyingTo}
+            onCancelReply={() => setReplyingTo(null)}
             onOpenAttachment={openAttachment}
             attachPopover={attachPopover}
             onOpenProject={openProjectPanel}
@@ -510,6 +530,7 @@ function Thread({
   role,
   selectedRole,
   isOnline,
+  lastSeen,
   bucket,
   draft,
   onDraftChange,
@@ -522,6 +543,9 @@ function Thread({
   attachedFile,
   onPickFile,
   onClearFile,
+  replyingTo,
+  onReply,
+  onCancelReply,
   onOpenAttachment,
   attachPopover,
   onOpenProject,
@@ -529,7 +553,40 @@ function Thread({
   className,
 }) {
   const fileInputRef = useRef(null)
+  const composerRef = useRef(null)
   const [viewingImage, setViewingImage] = useState(null)
+
+  // Reply quotes resolve their original from the messages already loaded
+  // for this conversation — no extra query per quote.
+  const messagesById = useMemo(() => new Map((bucket?.items ?? []).map((m) => [m.id, m])), [bucket])
+
+  // Clicking a reply quote scrolls to its original and briefly highlights it.
+  const [flashId, setFlashId] = useState(null)
+  useEffect(() => {
+    if (!flashId) return undefined
+    const timeout = setTimeout(() => setFlashId(null), 1500)
+    return () => clearTimeout(timeout)
+  }, [flashId])
+
+  function jumpToMessage(id) {
+    messageRefs.current.get(id)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    setFlashId(id)
+  }
+
+  function startReply(message) {
+    onReply(message)
+    composerRef.current?.focus()
+  }
+
+  // Ticks once a minute so "Active 4 minutes ago" keeps counting up while
+  // the thread stays open — presence changes themselves re-render instantly.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (isOnline) return undefined
+    setNow(Date.now())
+    const interval = setInterval(() => setNow(Date.now()), 60_000)
+    return () => clearInterval(interval)
+  }, [isOnline])
 
   // Search inside this conversation (like Messenger's "Search in
   // conversation"): matching messages are highlighted, and ↑/↓ step through
@@ -608,7 +665,7 @@ function Thread({
         </span>
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold text-slate-800">{ROLE_LABELS[selectedRole]}</p>
-          <p className="text-xs text-slate-500">{isOnline ? 'Active now' : 'Offline'}</p>
+          <p className="text-xs text-slate-500">{formatLastSeen(isOnline, lastSeen, now)}</p>
         </div>
         <button
           type="button"
@@ -691,6 +748,7 @@ function Thread({
             // Images sit on their own with no bubble behind them; the bubble
             // only wraps text, file and project content.
             const hasBubble = Boolean(message.body || hasFile || message.project)
+            const original = message.reply_to_id ? messagesById.get(message.reply_to_id) : null
             return (
               <Fragment key={message.id}>
               {startsNewDay ? (
@@ -705,12 +763,37 @@ function Thread({
                   if (node) messageRefs.current.set(message.id, node)
                   else messageRefs.current.delete(message.id)
                 }}
-                className={`flex flex-col ${isMine ? 'items-end' : 'items-start'}`}
+                className={`group -mx-2 flex flex-col rounded-lg px-2 py-1 transition-colors duration-500 ${isMine ? 'items-end' : 'items-start'} ${
+                  message.id === flashId ? 'bg-amber-100/70' : ''
+                }`}
               >
                 <p className="mb-1 px-1 text-xs font-medium text-slate-500">
                   {senderDisplayName(message)}
                 </p>
-                <div className={`flex max-w-[80%] flex-col gap-1.5 ${isMine ? 'items-end' : 'items-start'}`}>
+                <div className={`flex max-w-[85%] items-center gap-1 ${isMine ? 'flex-row-reverse' : ''}`}>
+                <div className={`flex min-w-0 flex-col gap-1.5 ${isMine ? 'items-end' : 'items-start'}`}>
+                  {message.reply_to_id ? (
+                    original ? (
+                      <button
+                        type="button"
+                        onClick={() => jumpToMessage(original.id)}
+                        title="Go to original message"
+                        className={`max-w-full rounded-xl border-slate-300 bg-slate-50 px-3 py-1.5 text-left text-xs text-slate-500 transition-colors hover:bg-slate-100 ${
+                          isMine ? 'border-r-4' : 'border-l-4'
+                        }`}
+                      >
+                        <span className="flex items-center gap-1 font-medium text-slate-600">
+                          <Reply className="h-3 w-3 shrink-0" aria-hidden="true" />
+                          Replied to {senderDisplayName(original)}
+                        </span>
+                        <span className="line-clamp-2 whitespace-pre-wrap break-words">{replySnippet(original)}</span>
+                      </button>
+                    ) : (
+                      <p className="rounded-xl bg-slate-50 px-3 py-1.5 text-xs italic text-slate-400">
+                        Original message unavailable
+                      </p>
+                    )
+                  ) : null}
                   {hasImage ? (
                     <MessageImage
                       message={message}
@@ -767,6 +850,18 @@ function Thread({
                     </div>
                   ) : null}
                 </div>
+                {/* Always visible on touch screens (no hover there); on a
+                    mouse it appears when the message row is hovered. */}
+                <button
+                  type="button"
+                  onClick={() => startReply(message)}
+                  aria-label="Reply"
+                  title="Reply"
+                  className="shrink-0 rounded-full p-1.5 text-slate-400 transition-opacity hover:bg-slate-100 hover:text-slate-600 focus:opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100"
+                >
+                  <Reply className="h-4 w-4" aria-hidden="true" />
+                </button>
+                </div>
                 <time
                   dateTime={message.created_at}
                   title={formatDateTime(message.created_at)}
@@ -789,6 +884,24 @@ function Thread({
       </div>
 
       <form onSubmit={onSend} className="border-t border-slate-200 p-3">
+        {replyingTo ? (
+          <div className="mb-2 flex items-start gap-2 rounded-lg border-l-4 border-blue-500 bg-slate-50 px-2.5 py-1.5 text-xs">
+            <Reply className="mt-0.5 h-3.5 w-3.5 shrink-0 text-blue-600" aria-hidden="true" />
+            <div className="min-w-0 flex-1">
+              <p className="font-medium text-slate-700">Replying to {senderDisplayName(replyingTo)}</p>
+              <p className="truncate text-slate-500">{replySnippet(replyingTo)}</p>
+            </div>
+            <button
+              type="button"
+              onClick={onCancelReply}
+              aria-label="Cancel reply"
+              className="rounded p-0.5 text-slate-500 hover:bg-slate-200"
+            >
+              <X className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+          </div>
+        ) : null}
+
         {attachedProject ? (
           <div className="mb-2 flex items-center gap-2 rounded-lg bg-blue-50 px-2.5 py-1.5 text-xs text-blue-700">
             <FolderKanban className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
@@ -863,12 +976,15 @@ function Thread({
           </div>
 
           <textarea
+            ref={composerRef}
             value={draft}
             onChange={(event) => onDraftChange(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault()
                 onSend(event)
+              } else if (event.key === 'Escape' && replyingTo) {
+                onCancelReply()
               }
             }}
             rows={1}

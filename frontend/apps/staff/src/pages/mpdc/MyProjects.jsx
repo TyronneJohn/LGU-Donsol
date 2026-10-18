@@ -114,7 +114,7 @@ export default function MyProjects() {
                 <th className="px-4 py-2.5 font-medium">Total Cost</th>
                 <th className="px-4 py-2.5 font-medium">Status</th>
                 <th className="px-4 py-2.5 font-medium">Created</th>
-                <th className="px-4 py-2.5 text-right font-medium">Action</th>
+                <th className="px-4 py-2.5 font-medium">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -132,8 +132,8 @@ export default function MyProjects() {
                     </Badge>
                   </td>
                   <td className="px-4 py-2.5 text-slate-600">{formatDate(project.created_at)}</td>
-                  <td className="px-4 py-2.5 text-right">
-                    <div className="flex justify-end gap-2">
+                  <td className="px-4 py-2.5">
+                    <div className="flex gap-2">
                       <Button to={`/mpdc/projects/${project.id}`} variant="secondary" size="sm">
                         View
                       </Button>

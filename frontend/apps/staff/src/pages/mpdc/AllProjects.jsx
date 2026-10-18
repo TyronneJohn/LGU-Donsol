@@ -152,7 +152,7 @@ export default function AllProjects() {
                   <th className="px-4 py-2.5 font-medium">Budget</th>
                   <th className="px-4 py-2.5 font-medium">Status</th>
                   <th className="px-4 py-2.5 font-medium">Created</th>
-                  <th className="px-4 py-2.5 font-medium" />
+                  <th className="px-4 py-2.5 font-medium">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -173,7 +173,7 @@ export default function AllProjects() {
                         </Badge>
                       </td>
                       <td className="px-4 py-2.5 text-slate-600">{formatDate(project.created_at)}</td>
-                      <td className="px-4 py-2.5 text-right">
+                      <td className="px-4 py-2.5">
                         {viewLink ? (
                           <Button to={viewLink} variant="secondary" size="sm" icon={ArrowRight}>
                             View

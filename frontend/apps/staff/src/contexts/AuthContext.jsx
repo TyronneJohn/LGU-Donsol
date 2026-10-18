@@ -1,14 +1,12 @@
-import { createContext, useEffect, useRef, useState } from 'react'
+import { createContext, useEffect, useState } from 'react'
 import { supabase } from '@shared/lib/supabaseClient'
 
 export const AuthContext = createContext(undefined)
 
-// How often the presence heartbeat below stamps profile_sessions.last_seen_at
-// while signed in. Staff Accounts (apps/staff/src/pages/admin/
-// StaffAccounts.jsx) treats a session as online only while its last_seen_at
-// is more recent than a few multiples of this — see HEARTBEAT_INTERVAL_MS
-// there.
-const HEARTBEAT_INTERVAL_MS = 60_000
+// How often the last-seen heartbeat below stamps profile_last_seen while
+// signed in — the most a closed-without-signing-out tab's "Active N
+// minutes ago" can be off by.
+const LAST_SEEN_INTERVAL_MS = 60_000
 
 // Roles are read from the `profiles` table (id, role, office_id, full_name).
 // `profiles.id` references `auth.users.id` directly (1:1), and a new row is
@@ -20,14 +18,6 @@ export function AuthProvider({ children }) {
   const [role, setRole] = useState(null)
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
-
-  // One random key per browser tab, for the lifetime of the tab — not per
-  // user. It identifies *this session* in profile_sessions, so signing out
-  // here only ever deletes this tab's presence row, regardless of who's
-  // signed in elsewhere. crypto.randomUUID() needs no network round trip,
-  // unlike deriving an id from the auth session itself.
-  const sessionKeyRef = useRef(null)
-  if (!sessionKeyRef.current) sessionKeyRef.current = crypto.randomUUID()
 
   useEffect(() => {
     let isMounted = true
@@ -103,45 +93,30 @@ export function AuthProvider({ children }) {
     }
   }, [])
 
-  // Presence heartbeat: upserts this tab's profile_sessions row immediately
-  // on sign-in and every HEARTBEAT_INTERVAL_MS thereafter, for as long as
-  // this session stays open. Keyed on the user id (not the whole session
-  // object) so it doesn't restart on every token refresh — only on an
-  // actual account switch. Signing in as someone else in the same tab just
-  // starts a new (profile_id, session_key) row; the old profile's row for
-  // this session_key is removed by signOut() below before that happens.
+  // Last-seen heartbeat for Messaging's "Active N minutes ago": stamps
+  // profile_last_seen (server time, via touch_last_seen()) on sign-in and
+  // every LAST_SEEN_INTERVAL_MS while signed in. Keyed on the user id so a
+  // token refresh doesn't restart it. "Online now" itself is realtime
+  // presence in PresenceContext.jsx, not this.
   const userId = session?.user?.id ?? null
   useEffect(() => {
     if (!userId) return undefined
-    const sessionKey = sessionKeyRef.current
 
     async function beat() {
-      await supabase
-        .from('profile_sessions')
-        .upsert(
-          { profile_id: userId, session_key: sessionKey, last_seen_at: new Date().toISOString() },
-          { onConflict: 'profile_id,session_key' },
-        )
+      await supabase.rpc('touch_last_seen')
     }
 
     beat()
-    const interval = setInterval(beat, HEARTBEAT_INTERVAL_MS)
+    const interval = setInterval(beat, LAST_SEEN_INTERVAL_MS)
     return () => clearInterval(interval)
   }, [userId])
 
   async function signOut() {
-    // Delete only this tab's presence row, before the session actually ends
-    // (once auth.signOut() resolves there's no authenticated session left
-    // to run this under, and RLS would reject it). Any other device/browser
-    // signed into the same account keeps its own row untouched, so the
-    // account still shows Active there — only this session flips off.
-    if (session?.user?.id) {
-      await supabase
-        .from('profile_sessions')
-        .delete()
-        .eq('profile_id', session.user.id)
-        .eq('session_key', sessionKeyRef.current)
-    }
+    // Final stamp so last-seen is the exact sign-out time — it has to run
+    // before auth.signOut(), while there's still a session to run it under.
+    // PresenceContext.jsx leaves the realtime channel once the session here
+    // becomes null.
+    if (session?.user?.id) await supabase.rpc('touch_last_seen')
     await supabase.auth.signOut()
   }
 
