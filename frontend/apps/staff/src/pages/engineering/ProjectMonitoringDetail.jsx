@@ -50,8 +50,9 @@ function localToday() {
   return `${now.getFullYear()}-${month}-${day}`
 }
 
+// No progress field: the update's progress is the AI Progress of its
+// Before & After comparison (20261028100000_ai_progress.sql).
 const EMPTY_FORM = {
-  progress_percentage: '',
   narrative_report: '',
   issues_encountered: '',
   report_date: localToday(),
@@ -240,7 +241,7 @@ export default function ProjectMonitoringDetail() {
 
   function updateField(field, value) {
     setForm((current) => ({ ...current, [field]: value }))
-    clearError(field === 'progress_percentage' ? 'progress' : field)
+    clearError(field)
   }
 
   // Draft comparison of a draft After photo — the site visit this update is
@@ -251,18 +252,17 @@ export default function ProjectMonitoringDetail() {
         comparison.released_at === null &&
         images.some((image) => image.id === comparison.after_image_id && image.released_at === null),
     ) ?? null
+  // Not editable: the database takes the update's progress from this
+  // comparison (never below the latest update's).
+  const aiProgress = draftComparison?.ai_progress != null ? Number(draftComparison.ai_progress) : null
 
   // Submit Monitoring Update: checks the form, then asks who is responsible
   // before anything is sent.
   function handleSubmitUpdate(event) {
     event.preventDefault()
 
-    const progress = Number(form.progress_percentage)
     if (
       !validate({
-        progress:
-          (form.progress_percentage === '' || progress < 0 || progress > 100) &&
-          'Enter a progress percentage between 0 and 100.',
         report_date: !form.report_date
           ? 'Choose the date this update covers.'
           : form.report_date > localToday() && 'The report date cannot be in the future.',
@@ -283,6 +283,10 @@ export default function ProjectMonitoringDetail() {
         'Before & After comparison required',
         'Take an After photo and press Generate in step 1 first.',
       )
+      return
+    }
+    if (aiProgress == null) {
+      toast.error('AI Progress required', 'The latest comparison has no AI Progress. Press Generate again in step 1.')
       return
     }
     setSubmitPromptOpen(true)
@@ -319,12 +323,13 @@ export default function ProjectMonitoringDetail() {
       .insert({
         project_id: project.id,
         reported_by: user.id,
-        progress_percentage: Number(form.progress_percentage),
+        // Overwritten by trg_require_draft_comparison with the same value.
+        progress_percentage: aiProgress,
         narrative_report: form.narrative_report.trim() || null,
         issues_encountered: form.issues_encountered.trim() || null,
         report_date: form.report_date,
       })
-      .select('id')
+      .select('id, progress_percentage')
       .single()
 
     if (updateError) {
@@ -353,7 +358,7 @@ export default function ProjectMonitoringDetail() {
 
     await confirmedBy.record(
       project.id,
-      `Submitted a monitoring update (${Number(form.progress_percentage)}% progress)`,
+      `Submitted a monitoring update (${Number(newUpdate.progress_percentage)}% AI Progress)`,
       responsiblePerson,
     )
     setForm(EMPTY_FORM)
@@ -533,19 +538,22 @@ export default function ProjectMonitoringDetail() {
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
                   <label htmlFor="progress" className="mb-1 block text-sm font-medium text-slate-700">
-                    Progress (%) *
+                    Progress (%) — AI Progress
                   </label>
                   <input
                     id="progress"
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="1"
-                    value={form.progress_percentage}
-                    onChange={(event) => updateField('progress_percentage', event.target.value)}
-                    className={inputClass + invalidClass(errors.progress)}
+                    type="text"
+                    readOnly
+                    disabled
+                    value={aiProgress != null ? `${aiProgress.toFixed(1)}%` : ''}
+                    placeholder="Generate in step 1"
+                    className={inputClass}
                   />
-                  <FieldError message={errors.progress} />
+                  <p className="mt-1 text-xs text-slate-500">
+                    {aiProgress != null
+                      ? 'From the AI Progress in step 1. Press Generate again to change it.'
+                      : 'Filled in automatically once Generate in step 1 gives an AI Progress.'}
+                  </p>
                 </div>
 
                 <div>
@@ -623,7 +631,8 @@ export default function ProjectMonitoringDetail() {
                     <p className="mt-1 flex items-start gap-1.5 text-sm text-emerald-800">
                       <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
                       <span>
-                        Attached: {Number(draftComparison.accuracy).toFixed(1)}% match accuracy, generated{' '}
+                        Attached: {Number(draftComparison.accuracy).toFixed(1)}% match accuracy
+                        {aiProgress != null ? `, ${aiProgress.toFixed(1)}% AI Progress` : ''}, generated{' '}
                         {formatDateTime(draftComparison.created_at)}. MPDC sees it once this update is submitted.
                       </span>
                     </p>
@@ -644,9 +653,7 @@ export default function ProjectMonitoringDetail() {
                   icon={Send}
                   loading={submitting}
                   disabled={
-                    form.progress_percentage === '' ||
-                    Number(form.progress_percentage) < 0 ||
-                    Number(form.progress_percentage) > 100 ||
+                    aiProgress == null ||
                     !form.report_date ||
                     reportFiles.length === 0 ||
                     !hasBeforePhoto ||

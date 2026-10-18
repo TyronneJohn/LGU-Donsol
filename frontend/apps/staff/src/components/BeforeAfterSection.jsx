@@ -50,9 +50,22 @@ const COMPLETION = {
   CANNOT_DETERMINE: { label: 'Completion cannot be determined', flag: false },
 }
 
+// Per-item status of the AI Progress (compare-before-after#computeAiProgress).
+const ITEM_STATUS = {
+  NOT_STARTED: { label: 'Not started', tone: 'neutral' },
+  IN_PROGRESS: { label: 'In progress', tone: 'amber' },
+  APPEARS_DONE: { label: 'Appears done', tone: 'green' },
+  NOT_VISIBLE: { label: 'Not visible', tone: 'neutral' },
+}
+
 // The matched-landmarks picture is hidden for now: Generate shows the
 // accuracy and the written explanation only. Set to true to bring it back.
 const SHOW_LANDMARK_PICTURE = false
+
+// The written AI explanation (summary, verdicts, landmarks, changes) is
+// hidden for now: AI Progress is the AI section. compare-before-after still
+// writes it, so old and new comparisons show it again when set to true.
+const SHOW_AI_EXPLANATION = false
 
 const ACCURACY_COLORS = {
   green: 'text-emerald-600',
@@ -150,6 +163,146 @@ function Verdict({ verdict, reason }) {
   )
 }
 
+// Materials or equipment the AI saw, split into the Before and After photo.
+function SightingList({ title, sightings }) {
+  const columns = [
+    ['Before', sightings.filter((s) => s.seen_in !== 'AFTER')],
+    ['After', sightings.filter((s) => s.seen_in !== 'BEFORE')],
+  ]
+  return (
+    <div>
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{title}</p>
+      <div className="mt-1 grid grid-cols-2 gap-3">
+        {columns.map(([label, list]) => (
+          <div key={label} className="rounded-lg bg-slate-50 p-2.5">
+            <p className="text-xs font-medium text-slate-600">{label}</p>
+            {list.length > 0 ? (
+              <ul className="mt-1 space-y-0.5 text-sm text-slate-700">
+                {list.map((s) => (
+                  <li key={`${s.name}-${s.seen_in}`}>
+                    {s.name}
+                    {s.pow_match ? <span className="text-[11px] text-emerald-700"> · in POW</span> : null}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-1 text-sm text-slate-400">None seen.</p>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// AI Progress: the progress the monitoring update is submitted with
+// (20261028100000_ai_progress.sql) — POW-weighted from the AI's per-item
+// judgments, never below the previous progress.
+function AiProgress({ comparison }) {
+  const ai = comparison.ai_analysis_status === 'PROCESSED' ? comparison.ai_analysis_result : null
+  const progress = comparison.ai_progress != null ? Number(comparison.ai_progress) : null
+  const breakdown = ai?.progress
+
+  return (
+    <section className="space-y-4 rounded-xl border border-blue-200 bg-blue-50/40 p-4">
+      <h4 className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+        <Sparkles className="h-4 w-4 text-blue-600" aria-hidden="true" />
+        AI Progress
+      </h4>
+
+      {progress == null ? (
+        <p className="flex items-start gap-2 text-sm text-amber-800">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+          {ai?.progress_error ??
+            (comparison.ai_analysis_result?.error
+              ? `The AI could not analyze the photos: ${comparison.ai_analysis_result.error}`
+              : 'This comparison has no AI Progress.')}{' '}
+          Press Generate again.
+        </p>
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-5">
+            <div className="text-center">
+              <p className="text-4xl font-bold tabular-nums text-blue-700">{progress.toFixed(1)}%</p>
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Project progress</p>
+            </div>
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <p className="text-sm text-slate-600">
+                How far the project appears to be, judged item by item from the photos and weighted by each Program of
+                Works item&apos;s share of the cost. This becomes the progress of the monitoring update.
+              </p>
+              <div className="h-2 overflow-hidden rounded-full bg-white ring-1 ring-blue-100">
+                <div className="h-full rounded-full bg-blue-600" style={{ width: `${Math.min(100, Math.max(0, progress))}%` }} />
+              </div>
+              {breakdown?.kept_previous ? (
+                <p className="text-xs text-slate-500">
+                  The photos show {Number(breakdown.computed).toFixed(1)}%, below the previous update&apos;s{' '}
+                  {Number(breakdown.previous_update_progress).toFixed(1)}% — progress never goes down, so the previous
+                  value is kept.
+                </p>
+              ) : null}
+            </div>
+          </div>
+
+          {ai ? (
+            <div className="grid gap-4 lg:grid-cols-2">
+              <SightingList title="Materials seen" sightings={ai.detected_materials ?? []} />
+              <SightingList title="Equipment seen" sightings={ai.detected_equipment ?? []} />
+            </div>
+          ) : null}
+
+          {breakdown?.items?.length ? (
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                Breakdown per Program of Works item
+              </p>
+              <div className="mt-1 overflow-x-auto rounded-lg border border-slate-200 bg-white">
+                <table className="w-full min-w-140 text-sm">
+                  <thead className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-slate-500">
+                    <tr>
+                      <th className="px-3 py-2 font-semibold">Item</th>
+                      <th className="px-3 py-2 text-right font-semibold">Weight</th>
+                      <th className="px-3 py-2 font-semibold">Status</th>
+                      <th className="px-3 py-2 text-right font-semibold">Done</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {breakdown.items.map((item) => (
+                      <tr key={item.index} className="align-top">
+                        <td className="px-3 py-2">
+                          <p className="font-medium text-slate-800">
+                            {item.item_no ? `${item.item_no} ` : ''}
+                            {item.description}
+                          </p>
+                          <p className="text-xs text-slate-500">{item.reason}</p>
+                          {item.carried_over ? (
+                            <p className="text-[11px] text-slate-400">Kept from the previous update.</p>
+                          ) : null}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums text-slate-600">
+                          {Number(item.weight).toFixed(2)}%
+                        </td>
+                        <td className="px-3 py-2">
+                          <Badge tone={ITEM_STATUS[item.status]?.tone ?? 'neutral'}>
+                            {ITEM_STATUS[item.status]?.label ?? item.status}
+                          </Badge>
+                        </td>
+                        <td className="px-3 py-2 text-right font-semibold tabular-nums text-slate-800">
+                          {Number(item.percent).toFixed(0)}%
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
+        </>
+      )}
+    </section>
+  )
+}
+
 function ComparisonResult({ comparison, images, visualization }) {
   const accuracy = Number(comparison.accuracy)
   const band = accuracyBand(accuracy)
@@ -224,52 +377,64 @@ function ComparisonResult({ comparison, images, visualization }) {
         </p>
       </section>
 
-      <section className="space-y-3 rounded-xl border border-slate-200 p-4">
-        <h4 className="flex items-center gap-2 text-sm font-semibold text-slate-800">
-          <Sparkles className="h-4 w-4 text-blue-600" aria-hidden="true" />
-          AI explanation
-        </h4>
-        {ai ? (
-          <>
-            <p className="text-sm text-slate-700">{ai.summary}</p>
-            {SAME_SITE[ai.same_site] ? <Verdict verdict={SAME_SITE[ai.same_site]} reason={ai.same_site_reason} /> : null}
-            {COMPLETION[ai.completion] ? <Verdict verdict={COMPLETION[ai.completion]} reason={ai.completion_reason} /> : null}
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Landmarks in both photos</p>
-                {ai.matching_landmarks?.length ? (
-                  <ul className="mt-1 list-disc space-y-0.5 pl-5 text-sm text-slate-700">
-                    {ai.matching_landmarks.map((item) => (
-                      <li key={item}>{item}</li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="mt-1 text-sm text-slate-500">None identified.</p>
-                )}
+      {/* With the explanation hidden, only its "possibly a different site"
+          warning stays. */}
+      {!SHOW_AI_EXPLANATION && ai?.same_site === 'POSSIBLY_DIFFERENT' ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-3">
+          <Verdict verdict={SAME_SITE.POSSIBLY_DIFFERENT} reason={ai.same_site_reason} />
+        </div>
+      ) : null}
+
+      {SHOW_AI_EXPLANATION ? (
+        <section className="space-y-3 rounded-xl border border-slate-200 p-4">
+          <h4 className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+            <Sparkles className="h-4 w-4 text-blue-600" aria-hidden="true" />
+            AI explanation
+          </h4>
+          {ai ? (
+            <>
+              <p className="text-sm text-slate-700">{ai.summary}</p>
+              {SAME_SITE[ai.same_site] ? <Verdict verdict={SAME_SITE[ai.same_site]} reason={ai.same_site_reason} /> : null}
+              {COMPLETION[ai.completion] ? <Verdict verdict={COMPLETION[ai.completion]} reason={ai.completion_reason} /> : null}
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Landmarks in both photos</p>
+                  {ai.matching_landmarks?.length ? (
+                    <ul className="mt-1 list-disc space-y-0.5 pl-5 text-sm text-slate-700">
+                      {ai.matching_landmarks.map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="mt-1 text-sm text-slate-500">None identified.</p>
+                  )}
+                </div>
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Visible changes</p>
+                  {ai.visible_changes?.length ? (
+                    <ul className="mt-1 list-disc space-y-0.5 pl-5 text-sm text-slate-700">
+                      {ai.visible_changes.map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="mt-1 text-sm text-slate-500">None noted.</p>
+                  )}
+                </div>
               </div>
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Visible changes</p>
-                {ai.visible_changes?.length ? (
-                  <ul className="mt-1 list-disc space-y-0.5 pl-5 text-sm text-slate-700">
-                    {ai.visible_changes.map((item) => (
-                      <li key={item}>{item}</li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="mt-1 text-sm text-slate-500">None noted.</p>
-                )}
-              </div>
-            </div>
-            <p className="rounded-lg bg-slate-50 p-3 text-xs text-slate-500">{ai.limitations}</p>
-          </>
-        ) : (
-          <p className="text-sm text-slate-500">
-            {comparison.ai_analysis_result?.error
-              ? `The written explanation could not be generated: ${comparison.ai_analysis_result.error} The accuracy above is unaffected.`
-              : 'No written explanation for this comparison.'}
-          </p>
-        )}
-      </section>
+              <p className="rounded-lg bg-slate-50 p-3 text-xs text-slate-500">{ai.limitations}</p>
+            </>
+          ) : (
+            <p className="text-sm text-slate-500">
+              {comparison.ai_analysis_result?.error
+                ? `The written explanation could not be generated: ${comparison.ai_analysis_result.error} The accuracy above is unaffected.`
+                : 'No written explanation for this comparison.'}
+            </p>
+          )}
+        </section>
+      ) : null}
+
+      <AiProgress comparison={comparison} />
 
       <p className="text-[11px] italic text-slate-400">
         Generated {formatDateTime(comparison.created_at)}. Decision-support only — not an official engineering
@@ -576,12 +741,19 @@ export default function BeforeAfterSection({
 
       setComparisons((current) => [data.comparison, ...current])
       setShownComparisonId(data.comparison.id)
+      const accuracyText = `${Number(data.comparison.accuracy).toFixed(1)}% match accuracy`
+      const progressText =
+        data.comparison.ai_progress != null ? `${Number(data.comparison.ai_progress).toFixed(1)}% AI Progress` : null
       await confirmedBy.record(
         project.id,
-        `Generated a Before & After comparison (${Number(data.comparison.accuracy).toFixed(1)}% match accuracy)`,
+        `Generated a Before & After comparison (${[accuracyText, progressText].filter(Boolean).join(', ')})`,
         generatedBy,
       )
-      toast.success('Comparison generated', `Match accuracy: ${Number(data.comparison.accuracy).toFixed(1)}%`)
+      if (progressText) {
+        toast.success('Comparison generated', `${accuracyText} · ${progressText}`)
+      } else {
+        toast.error('Comparison generated without AI Progress', 'Press Generate again before submitting the update.')
+      }
     } catch (error) {
       setVisualization(null)
       toast.error('Could not generate the comparison', error.message)
@@ -776,7 +948,7 @@ export default function BeforeAfterSection({
               ? 'Generate becomes available once there is both a Before and an After photo.'
               : needsNewAfter
                 ? 'Take a new After photo first — Generate compares it with the Before photo for this update.'
-                : 'Compares the selected Before and After photos and computes the match accuracy.'}
+                : 'Compares the selected Before and After photos: the match accuracy, and the AI Progress per Program of Works item.'}
           </p>
           <Button type="button" icon={ScanSearch} loading={Boolean(generating)} disabled={!canGenerate} onClick={requestGenerate}>
             {generating === 'processing'
@@ -844,6 +1016,12 @@ export default function BeforeAfterSection({
                       }`}
                     >
                       <span className="font-semibold tabular-nums">{Number(comparison.accuracy).toFixed(1)}%</span>
+                      {comparison.ai_progress != null ? (
+                        <span className="tabular-nums text-blue-700">
+                          {' '}
+                          · {Number(comparison.ai_progress).toFixed(1)}% progress
+                        </span>
+                      ) : null}
                       <span className="text-slate-500"> · {formatDateTime(comparison.created_at)}</span>
                       {isDraft(comparison) ? <span className="text-amber-700"> · Draft</span> : null}
                     </button>

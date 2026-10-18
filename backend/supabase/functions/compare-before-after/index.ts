@@ -10,9 +10,14 @@
 //   2. re-checks the submitted metrics and recomputes the accuracy from them,
 //      so a client can't post an accuracy its own numbers don't support,
 //   3. asks Gemini for a short WRITTEN explanation of the two photos
-//      (advisory — it never changes the accuracy),
-//   4. saves the row to project_before_after_comparisons (service role).
-// A Gemini failure still saves the accuracy, with ai_analysis_status FAILED.
+//      (advisory — it never changes the accuracy), the materials and
+//      equipment it sees, and how far each Program of Works item has gone,
+//   4. computes the AI Progress from those per-item judgments and the POW
+//      weights (computeAiProgress) — Gemini never gives the total itself,
+//   5. saves the row to project_before_after_comparisons (service role).
+// A Gemini failure still saves the accuracy, with ai_analysis_status FAILED
+// and no AI Progress. The AI Progress becomes the progress of the monitoring
+// update (20261028100000_ai_progress.sql).
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 
 const GEMINI_MODEL = 'gemini-3.5-flash'
@@ -27,6 +32,17 @@ const TARGET_INLIERS = 50
 
 const SAME_SITE_VALUES = ['LIKELY_SAME', 'POSSIBLY_DIFFERENT', 'CANNOT_DETERMINE']
 const COMPLETION_VALUES = ['APPEARS_COMPLETE', 'APPEARS_INCOMPLETE', 'CANNOT_DETERMINE']
+const SEEN_IN_VALUES = ['BEFORE', 'AFTER', 'BOTH']
+const ITEM_STATUS_VALUES = ['NOT_STARTED', 'IN_PROGRESS', 'APPEARS_DONE', 'NOT_VISIBLE']
+
+type PowItem = { item_no?: string | null; description: string; quantity?: number; unit?: string; weight: number }
+type Pow = {
+  items: PowItem[]
+  materials: { name: string; quantity?: number; unit?: string }[]
+  equipment: { name: string; count?: number }[]
+  scope_description?: string | null
+}
+type ItemJudgment = { item_index: number; status: string; percent: number; reason: string }
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -68,9 +84,53 @@ function validateMetrics(candidate: unknown) {
   }
 }
 
-function validateAi(candidate: unknown) {
+function validateSightings(v: unknown) {
+  if (!Array.isArray(v)) return null
+  const out = []
+  for (const s of v) {
+    if (!s || typeof s !== 'object') return null
+    const o = s as Record<string, unknown>
+    if (typeof o.name !== 'string' || typeof o.seen_in !== 'string' || !SEEN_IN_VALUES.includes(o.seen_in)) return null
+    out.push({ name: o.name, seen_in: o.seen_in, pow_match: typeof o.pow_match === 'string' ? o.pow_match : '' })
+  }
+  return out
+}
+
+// One judgment per POW item, each item exactly once.
+function validateItemProgress(v: unknown, itemCount: number): ItemJudgment[] | null {
+  if (!Array.isArray(v) || v.length !== itemCount) return null
+  const seen = new Set<number>()
+  const out: ItemJudgment[] = []
+  for (const j of v) {
+    if (!j || typeof j !== 'object') return null
+    const o = j as Record<string, unknown>
+    if (
+      typeof o.item_index !== 'number' ||
+      !Number.isInteger(o.item_index) ||
+      o.item_index < 0 ||
+      o.item_index >= itemCount ||
+      seen.has(o.item_index) ||
+      typeof o.status !== 'string' ||
+      !ITEM_STATUS_VALUES.includes(o.status) ||
+      typeof o.percent !== 'number' ||
+      !Number.isFinite(o.percent) ||
+      typeof o.reason !== 'string'
+    ) {
+      return null
+    }
+    seen.add(o.item_index)
+    out.push({ item_index: o.item_index, status: o.status, percent: o.percent, reason: o.reason })
+  }
+  return out
+}
+
+function validateAi(candidate: unknown, itemCount: number) {
   if (!candidate || typeof candidate !== 'object') return null
   const o = candidate as Record<string, unknown>
+  const materials = validateSightings(o.detected_materials)
+  const equipment = validateSightings(o.detected_equipment)
+  const itemProgress = itemCount > 0 ? validateItemProgress(o.item_progress, itemCount) : []
+  if (!materials || !equipment || !itemProgress) return null
   if (
     typeof o.summary !== 'string' ||
     typeof o.same_site !== 'string' ||
@@ -94,6 +154,66 @@ function validateAi(candidate: unknown) {
     completion: o.completion,
     completion_reason: o.completion_reason,
     limitations: o.limitations,
+    detected_materials: materials,
+    detected_equipment: equipment,
+    item_progress: itemProgress,
+  }
+}
+
+const round2 = (n: number) => Math.round(n * 100) / 100
+
+// AI Progress = Σ(item % × POW weight) ÷ Σ(weight). The % of each item
+// follows its status (not started 0, done 100, in progress 1–99) and never
+// goes below what the previous submitted comparison gave it; an item the AI
+// can't see keeps that previous %. The total never goes below the latest
+// monitoring update's progress.
+function computeAiProgress(
+  items: PowItem[],
+  judgments: ItemJudgment[],
+  previousItems: { index: number; description: string; percent: number }[],
+  previousUpdateProgress: number | null,
+) {
+  const byIndex = new Map(judgments.map((j) => [j.item_index, j]))
+  let weighted = 0
+  let totalWeight = 0
+  const breakdown = items.map((item, index) => {
+    const j = byIndex.get(index)!
+    const prev = previousItems.find((p) => p.index === index && p.description === item.description)?.percent ?? 0
+    const aiPercent =
+      j.status === 'NOT_STARTED'
+        ? 0
+        : j.status === 'APPEARS_DONE'
+          ? 100
+          : j.status === 'IN_PROGRESS'
+            ? Math.min(99, Math.max(1, Math.round(j.percent)))
+            : null
+    const percent = Math.max(prev, aiPercent ?? 0)
+    const weight = Number(item.weight) || 0
+    weighted += percent * weight
+    totalWeight += weight
+    return {
+      index,
+      item_no: item.item_no ?? null,
+      description: item.description,
+      weight,
+      status: j.status,
+      ai_percent: aiPercent,
+      percent,
+      carried_over: aiPercent === null ? prev > 0 : prev > aiPercent,
+      reason: j.reason,
+    }
+  })
+  const computed = totalWeight > 0 ? round2(weighted / totalWeight) : 0
+  const floor = previousUpdateProgress ?? 0
+  return {
+    ai_progress: Math.max(computed, floor),
+    progress: {
+      basis: 'POW_WEIGHTS',
+      computed,
+      previous_update_progress: previousUpdateProgress,
+      kept_previous: floor > computed,
+      items: breakdown,
+    },
   }
 }
 
@@ -138,7 +258,25 @@ function toBase64(bytes: Uint8Array): string {
   return btoa(binary)
 }
 
-function buildPrompt(project: Record<string, unknown> | null, accuracy: number) {
+function buildPrompt(project: Record<string, unknown> | null, accuracy: number, pow: Pow | null) {
+  const itemLines = (pow?.items ?? []).map(
+    (item, index) =>
+      `[${index}] ${item.item_no ? `${item.item_no} ` : ''}${item.description}` +
+      (item.quantity != null ? ` — ${item.quantity} ${item.unit ?? ''}`.trimEnd() : '') +
+      ` (weight ${item.weight}%)`,
+  )
+  const materialLines = (pow?.materials ?? []).map((m) => `- ${m.name}`)
+  const equipmentLines = (pow?.equipment ?? []).map((e) => `- ${e.name}`)
+  const powSection = pow
+    ? `Program of Works (the approved plan of this project):
+${pow.scope_description ? `Scope: ${pow.scope_description}\n` : ''}Work items (index, description, quantity, weight):
+${itemLines.join('\n')}
+Planned materials:
+${materialLines.length > 0 ? materialLines.join('\n') : 'None listed.'}
+Planned equipment:
+${equipmentLines.length > 0 ? equipmentLines.join('\n') : 'None listed.'}`
+    : 'Program of Works: not available — return item_progress as an empty list.'
+
   const contextLines = [
     project?.title ? `Project title: ${project.title}` : null,
     project?.project_category ? `Category: ${project.project_category}` : null,
@@ -148,16 +286,20 @@ function buildPrompt(project: Record<string, unknown> | null, accuracy: number) 
 
   return `You are an assistive image-observation tool inside a local government unit's project monitoring system (Donsol, Sorsogon, Philippines). You are given exactly two photos of ONE project: a BEFORE photo taken before construction started, and an AFTER photo captured by field engineering staff when the project was reported finished.
 
-An image-processing step (ORB feature matching with RANSAC geometric verification) has already measured how well the two photos match: ${accuracy}% match accuracy. Do NOT produce your own percentage. Your job is only to explain, in words, what is visible.
+An image-processing step (ORB feature matching with RANSAC geometric verification) has already measured how well the two photos match: ${accuracy}% match accuracy. Do NOT produce your own match percentage. Your job is to explain what is visible, list the construction materials and equipment you can see, and judge how far each Program of Works item has gone. The overall project progress is computed by the system from your per-item judgments and the POW weights — do not give an overall percentage.
 
 Rules:
 - Describe only what is visibly evident. Do not invent measurements, dates, costs or locations.
 - The site will look different because construction happened — that alone does not make it a different site. Judge "same site" from fixed surroundings: terrain, trees, neighbouring buildings, road alignment, poles, landmarks.
 - Do not claim the photos are authentic or prove anything about the contractor. Use hedged language ("appears to").
 - This is advisory, not an official engineering inspection.
+- Materials and equipment: list only what you can actually see (e.g. gravel, sand, cement bags, formworks, rebar, poured concrete, hollow blocks, mixer, compactor). Say whether each is in the BEFORE photo, the AFTER photo, or BOTH. Materials hidden inside finished work cannot be seen — do not list them.
+- Per POW item: judge from the AFTER photo compared with the BEFORE photo. NOT_STARTED = no visible work on it; IN_PROGRESS = visibly started but not finished (give a percent 1–99 of the item that looks done); APPEARS_DONE = the item looks finished; NOT_VISIBLE = the item can't be seen in the photos (out of frame, underground, hidden). Be conservative: when unsure between two statuses, choose the lower one.
 
 Project context (administrative metadata, not verified by the photos):
 ${contextLines.length > 0 ? contextLines.join('\n') : 'None provided.'}
+
+${powSection}
 
 Respond with JSON matching the schema:
 - summary: two sentences on what changed from BEFORE to AFTER.
@@ -167,10 +309,28 @@ Respond with JSON matching the schema:
 - visible_changes: short list of physical changes between the photos (empty if none — never invent).
 - completion: APPEARS_COMPLETE, APPEARS_INCOMPLETE or CANNOT_DETERMINE, based only on the AFTER photo.
 - completion_reason: one sentence.
-- limitations: one sentence on what cannot be concluded from two photos.`
+- limitations: one sentence on what cannot be concluded from two photos.
+- detected_materials: list of {name, seen_in (BEFORE, AFTER or BOTH), pow_match (the matching planned material's name exactly as listed above, or "" if none)}.
+- detected_equipment: same shape, matched against the planned equipment.
+- item_progress: exactly one entry per POW work item: {item_index, status, percent (0–100; 0 for NOT_STARTED and NOT_VISIBLE, 100 for APPEARS_DONE), reason (one sentence on what is visible)}.`
 }
 
-async function explainWithGemini(apiKey: string, prompt: string, before: { mime: string; data: string }, after: { mime: string; data: string }) {
+async function explainWithGemini(
+  apiKey: string,
+  prompt: string,
+  before: { mime: string; data: string },
+  after: { mime: string; data: string },
+  itemCount: number,
+) {
+  const sighting = {
+    type: 'OBJECT',
+    properties: {
+      name: { type: 'STRING' },
+      seen_in: { type: 'STRING', enum: SEEN_IN_VALUES },
+      pow_match: { type: 'STRING' },
+    },
+    required: ['name', 'seen_in', 'pow_match'],
+  }
   const requestBody = JSON.stringify({
     contents: [
       {
@@ -184,8 +344,10 @@ async function explainWithGemini(apiKey: string, prompt: string, before: { mime:
       },
     ],
     generationConfig: {
-      temperature: 0.2,
-      maxOutputTokens: 4096,
+      // 0: the AI Progress becomes the update's progress, so the same photos
+      // should give the same judgments as far as possible.
+      temperature: 0,
+      maxOutputTokens: 8192,
       thinkingConfig: { thinkingLevel: 'LOW' },
       responseMimeType: 'application/json',
       responseSchema: {
@@ -199,6 +361,21 @@ async function explainWithGemini(apiKey: string, prompt: string, before: { mime:
           completion: { type: 'STRING', enum: COMPLETION_VALUES },
           completion_reason: { type: 'STRING' },
           limitations: { type: 'STRING' },
+          detected_materials: { type: 'ARRAY', items: sighting },
+          detected_equipment: { type: 'ARRAY', items: sighting },
+          item_progress: {
+            type: 'ARRAY',
+            items: {
+              type: 'OBJECT',
+              properties: {
+                item_index: { type: 'INTEGER' },
+                status: { type: 'STRING', enum: ITEM_STATUS_VALUES },
+                percent: { type: 'NUMBER' },
+                reason: { type: 'STRING' },
+              },
+              required: ['item_index', 'status', 'percent', 'reason'],
+            },
+          },
         },
         required: [
           'summary',
@@ -209,6 +386,9 @@ async function explainWithGemini(apiKey: string, prompt: string, before: { mime:
           'completion',
           'completion_reason',
           'limitations',
+          'detected_materials',
+          'detected_equipment',
+          'item_progress',
         ],
       },
     },
@@ -263,7 +443,7 @@ async function explainWithGemini(apiKey: string, prompt: string, before: { mime:
   } catch {
     throw new Error('Gemini returned malformed JSON.')
   }
-  const validated = validateAi(parsed)
+  const validated = validateAi(parsed, itemCount)
   if (!validated) throw new Error('Gemini returned an incomplete explanation.')
   return validated
 }
@@ -336,8 +516,51 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: 'Choose one BEFORE and one AFTER photo of this project.' }, 400)
     }
 
+    // POW basis of the AI Progress, plus where the progress stands now (it
+    // never goes down — computeAiProgress).
+    const [{ data: powRow }, { data: previousComparison }, { data: latestUpdate }] = await Promise.all([
+      admin
+        .from('project_pow_details')
+        .select('items, materials, equipment, scope_description')
+        .eq('project_id', project_id)
+        .maybeSingle(),
+      admin
+        .from('project_before_after_comparisons')
+        .select('ai_analysis_result')
+        .eq('project_id', project_id)
+        .not('released_at', 'is', null)
+        .not('ai_progress', 'is', null)
+        .order('released_at', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      admin
+        .from('project_updates')
+        .select('progress_percentage')
+        .eq('project_id', project_id)
+        .not('progress_percentage', 'is', null)
+        .order('report_date', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    ])
+    const pow: Pow | null =
+      powRow && Array.isArray(powRow.items) && powRow.items.length > 0
+        ? {
+            items: powRow.items as PowItem[],
+            materials: Array.isArray(powRow.materials) ? powRow.materials : [],
+            equipment: Array.isArray(powRow.equipment) ? powRow.equipment : [],
+            scope_description: powRow.scope_description,
+          }
+        : null
+    const previousItems = Array.isArray(previousComparison?.ai_analysis_result?.progress?.items)
+      ? previousComparison.ai_analysis_result.progress.items
+      : []
+    const previousUpdateProgress =
+      latestUpdate?.progress_percentage != null ? Number(latestUpdate.progress_percentage) : null
+
     let aiStatus = 'PROCESSED'
     let aiResult: Record<string, unknown>
+    let aiProgress: number | null = null
     try {
       const apiKey = Deno.env.get('GEMINI_API_KEY')
       if (!apiKey) throw new Error('AI explanation is not configured on the server (missing API key).')
@@ -352,8 +575,28 @@ Deno.serve(async (req) => {
         return { mime, data: toBase64(bytes) }
       }
       const [before, after] = await Promise.all([load(beforeImage.storage_path), load(afterImage.storage_path)])
+      const itemCount = pow?.items.length ?? 0
+      const explained = await explainWithGemini(
+        apiKey,
+        buildPrompt(project, accuracy, pow),
+        before,
+        after,
+        itemCount,
+      )
+      const { item_progress: judgments, ...explanation } = explained
+      let progressFields: Record<string, unknown>
+      if (pow) {
+        const computed = computeAiProgress(pow.items, judgments, previousItems, previousUpdateProgress)
+        aiProgress = computed.ai_progress
+        progressFields = { progress: computed.progress }
+      } else {
+        progressFields = {
+          progress_error: 'This project has no detailed Program of Works, so there is no basis for the AI Progress.',
+        }
+      }
       aiResult = {
-        ...(await explainWithGemini(apiKey, buildPrompt(project, accuracy), before, after)),
+        ...explanation,
+        ...progressFields,
         model: GEMINI_MODEL,
         analyzed_at: new Date().toISOString(),
       }
@@ -376,6 +619,7 @@ Deno.serve(async (req) => {
         metrics,
         ai_analysis_status: aiStatus,
         ai_analysis_result: aiResult,
+        ai_progress: aiProgress,
         generated_by: callerData.user.id,
       })
       .select('*')
